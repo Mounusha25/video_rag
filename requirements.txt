@@ -8,7 +8,9 @@ requests
 duckduckgo-search>=6.0.0
 # Removed heavy/unused libs for Vercel
 modal
+# Local CPU inference for text embedding (enables search without Modal)
+torch --index-url https://download.pytorch.org/whl/cpu
+transformers==4.47.1
 # Note: uvicorn is also provided by the Vercel runtime — safe to keep here for Docker/Fly.io
 # opencv-python-headless
 # openai
-# Removed: torch, torchvision, transformers, huggingface-hub, yt-dlp, pillow

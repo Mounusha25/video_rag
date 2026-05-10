@@ -397,6 +397,22 @@ export default function Dashboard() {
     setFrames([]); // Clear old frames immediately
     addLog(`INITIALIZING CLUSTER...`);
     addLog(`Source: ${source} | URL: ${url || "Default"} | Target: "${prompt}"`);
+
+    // Check if data already exists in MongoDB before hitting Modal
+    try {
+      const preCheck = await axios.post(`${API_BASE}/search`, {
+        query: prompt,
+        top_k: 1,
+        source_url: url || undefined,
+      });
+      if (preCheck.data.ok && preCheck.data.results.length > 0) {
+        addLog(`✅ Existing dataset found — loading from database`);
+        setIsIngesting(false);
+        fetchFrames();
+        return;
+      }
+    } catch (_) {}
+
     addLog(`Scaling to ${scale} workers on A10G GPUs...`);
     if (stealth) addLog(`[STEALTH] Bright Data Resi-Proxies ENGAGED 🥷`);
     

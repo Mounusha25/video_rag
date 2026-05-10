@@ -13,10 +13,10 @@ from modal_infra.ingestor import image, MODEL_REPO
 app = modal.App("clip-embedder")
 
 @app.cls(
-    image=image, 
-    gpu="A10G", # Use GPU for fast embedding
-    keep_warm=1, # Keep at least one instance warm
-    container_idle_timeout=300 # Keep container alive for 5 minutes of inactivity
+    image=image,
+    gpu="A10G",
+    min_containers=0,
+    scaledown_window=60
 )
 class CLIPEmbedder:
     def __enter__(self):
@@ -42,7 +42,7 @@ class CLIPEmbedder:
             emb = emb / emb.norm(p=2, dim=-1, keepdim=True)
             return emb.cpu().numpy()[0].tolist()
 
-    @modal.web_endpoint(method="POST", label="embed")
+    @modal.fastapi_endpoint(method="POST", label="embed")
     def web_embed(self, item: dict):
         """
         Web endpoint for embedding text.
@@ -54,9 +54,24 @@ class CLIPEmbedder:
         
         return {"embedding": self.embed_text.local(text)}
 
+@app.function(image=image, gpu="A10G", min_containers=0, scaledown_window=60)
+def embed_text(text: str) -> list:
+    """Module-level function so api.py can do: from modal_infra.embedder import embed_text; embed_text.remote(t)"""
+    from transformers import CLIPProcessor, CLIPModel
+    import torch
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model = CLIPModel.from_pretrained(MODEL_REPO).to(device).eval()
+    processor = CLIPProcessor.from_pretrained(MODEL_REPO)
+    inputs = processor(text=[text], return_tensors="pt", padding=True, truncation=True).to(device)
+    with torch.no_grad():
+        emb = model.get_text_features(**inputs)
+        emb = emb / emb.norm(p=2, dim=-1, keepdim=True)
+    return emb.cpu().numpy()[0].tolist()
+
+
 @app.local_entrypoint()
 def main(text: str = "test query"):
-    embedder = CLIPEmbedder()
     print(f"Embedding '{text}'...")
-    vector = embedder.embed_text.remote(text)
+    vector = embed_text.remote(text)
     print(f"Vector (first 5 dim): {vector[:5]}... Total dims: {len(vector)}")

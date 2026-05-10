@@ -556,7 +556,7 @@ def search_frames(req: SearchRequest):
         # Filter out low relevance scores (Noise reduction)
         # Cosine similarity for CLIP usually effectively ranges 0.2-0.3 for good matches
         score = doc.get("score", 0)
-        if score < 0.22: 
+        if score < 0.18: 
             continue
             
         # doc has: embedding, time, title, source, score (from search)

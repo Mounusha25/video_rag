@@ -1,37 +1,121 @@
-# ShotSpot — Search Video Like You Search Text
+# ShotSpot — Semantic Video Search
 
 ![ShotSpot Demo](example.png)
 
-> 🥈 Runner-Up – Modal Inference Track &nbsp;|&nbsp; 🥉 3rd Place – Bright Data Best AI-Powered Web Data Track
+---
+
+## The problem
+
+Finding a specific moment in a long video is painful. You scrub through manually, guess timestamps, and repeat. There is no equivalent of Ctrl+F for video.
+
+ShotSpot fixes that. You describe what you're looking for in plain English and it returns the exact timestamps where that thing appears — across any YouTube video — with a clickable embedded preview at the right second.
 
 ---
 
 ## What it does
 
-ShotSpot lets you search inside YouTube videos using plain English. You type what you're looking for — `"dancing man in black trenchcoat"` — and it returns the exact timestamps in the video where that matches, along with a clickable clip preview.
+ShotSpot lets you search inside YouTube videos using plain English. Type what you're looking for — `"close-up of someone's face"`, `"explosion in the background"`, `"text on a whiteboard"` — and it returns the exact timestamps where that appears, with a clickable player that jumps straight to that moment.
 
-Under the hood it embeds every frame of a video with CLIP, stores the vectors in MongoDB Atlas, and does a cosine-similarity vector search against your query at runtime. No scrubbing. No manual labeling.
+No manual scrubbing. No timestamps guessing. No frame-by-frame review.
 
 ---
 
-## How it works
+## Architecture
 
-### Ingestion pipeline (runs once per video)
-1. **Download** — yt-dlp pulls the YouTube video
-2. **Frame sampling** — one frame every 5 seconds
-3. **CLIP visual embedding** — `laion/CLIP-ViT-B-32-laion2B-s34B-b79K` encodes each frame into a 512-dim vector
-4. **Whisper transcription** — audio is transcribed and chunked by timestamp
-5. **OCR** — EasyOCR extracts any on-screen text
-6. **Fusion** — visual + text (transcript + OCR) embeddings are averaged and renormalized
-7. **MongoDB write** — each frame document stored with its embedding, timestamp, and source URL
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                          USER QUERY                             │
+│                   "dancing in a red room"                       │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                    CLIP Text Encoder
+                    (512-dim vector)
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              MongoDB Atlas — $vectorSearch                       │
+│         cosine similarity across all stored frame vectors       │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+               Top-K results ranked by score
+               Grouped into timestamp segments
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    DATASET EXPLORER (UI)                        │
+│       Frame cards with timestamp + embedded YouTube player      │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-The ingestion pipeline runs on Modal GPU workers (A10G). The vector index (`frame_vectors`, cosine, 512-dim) lives in MongoDB Atlas.
+---
 
-### Search (real-time)
-1. User query → CLIP text encoder → 512-dim vector
-2. `$vectorSearch` against `frames` collection in MongoDB Atlas
-3. Results ranked by cosine similarity, grouped into continuous timestamp segments
-4. Frontend renders clickable frame cards that open an embedded YouTube player at the exact second
+## How a video gets indexed
+
+Each video is processed once through an ingestion pipeline before it becomes searchable:
+
+```
+YouTube URL
+    │
+    ├─ yt-dlp download
+    │
+    ├─ Frame sampling (1 frame / 5 seconds)
+    │       │
+    │       └─ CLIP visual encoder → 512-dim visual vector
+    │
+    ├─ Whisper transcription (audio → text, chunked by timestamp)
+    │       │
+    │       └─ CLIP text encoder → 512-dim text vector
+    │
+    ├─ EasyOCR (on-screen text extraction)
+    │       │
+    │       └─ CLIP text encoder → 512-dim text vector
+    │
+    └─ Fusion: visual + text vectors averaged + renormalized
+               → stored in MongoDB as one document per frame
+                 with: embedding, timestamp, source_url, title
+```
+
+The fusion step combines what the frame *looks like* with what is *being said* and *shown as text* at that moment. This makes search work across visual, spoken, and written content simultaneously.
+
+Ingestion runs on Modal GPU workers (A10G). Search runs locally on CPU — no GPU needed at query time.
+
+---
+
+## Tech stack
+
+| Layer | Technology | Role |
+|---|---|---|
+| Embedding model | `laion/CLIP-ViT-B-32-laion2B-s34B-b79K` | Visual + text encoding (512-dim) |
+| Transcription | OpenAI Whisper large-v2 | Audio → timestamped text |
+| OCR | EasyOCR | On-screen text extraction |
+| Vector database | MongoDB Atlas Vector Search | Cosine similarity search at scale |
+| GPU workers | Modal (A10G) | Serverless ingestion pipeline |
+| Backend | FastAPI + uvicorn | REST API: search, ingest, stats |
+| Frontend | Next.js 14, Tailwind CSS | Dataset Explorer UI |
+| Deployment | Vercel | Frontend + serverless API |
+
+---
+
+## Workflow
+
+### 1. Ingest a video
+
+Submit a YouTube URL via the **ANALYZE DATA** tab. The backend triggers the Modal ingestion pipeline, which samples frames, runs CLIP + Whisper + OCR, fuses the embeddings, and writes one document per frame to MongoDB.
+
+This runs once per video. Subsequent searches against the same video are instant.
+
+### 2. Search
+
+Enter a text query in the **ANALYZE DATA** tab and click **INITIALIZE INGEST**. If the video is already indexed, results load immediately from the existing vectors — no re-ingestion.
+
+Each result shows:
+- Matched timestamp (e.g. `2m 15s`)
+- Similarity score
+- Inline YouTube embed starting at that exact second
+
+### 3. Export
+
+Click **EXPORT DATASET (JSON)** to download all matched frames as a structured dataset with timestamps, scores, and source URLs — ready for use in model training or annotation pipelines.
 
 ---
 
@@ -40,8 +124,8 @@ The ingestion pipeline runs on Modal GPU workers (A10G). The vector index (`fram
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- MongoDB Atlas cluster (free M0 works)
-- `.env` file (see `.env.example`)
+- MongoDB Atlas cluster (free M0 tier works)
+- `.env` file — copy `.env.example` and fill in values
 
 ### Backend
 
@@ -50,7 +134,7 @@ pip install -r requirements.txt
 uvicorn app.backend.api:app --reload --port 8000
 ```
 
-The backend loads CLIP locally on CPU (no GPU required for search). The model (~605 MB) is downloaded once and cached in `~/.cache/huggingface/`.
+CLIP (~605 MB) is downloaded once on first startup and cached at `~/.cache/huggingface/`. No GPU needed for search — runs on CPU.
 
 ### Frontend
 
@@ -58,13 +142,12 @@ The backend loads CLIP locally on CPU (no GPU required for search). The model (~
 cd app/frontend
 npm install
 npm run dev
+# → http://localhost:3000
 ```
 
-Open `http://localhost:3000`.
+The frontend proxies `/api/*` → `http://localhost:8000` via `next.config.js`.
 
-### MongoDB vector index
-
-The Atlas vector index must exist before search works. Create it once:
+### Create the MongoDB vector index (one-time)
 
 ```python
 from pymongo import MongoClient
@@ -79,7 +162,12 @@ c["videorag"].command({
         "name": "frame_vectors",
         "type": "vectorSearch",
         "definition": {
-            "fields": [{"type": "vector", "path": "embedding", "numDimensions": 512, "similarity": "cosine"}]
+            "fields": [{
+                "type": "vector",
+                "path": "embedding",
+                "numDimensions": 512,
+                "similarity": "cosine"
+            }]
         }
     }]
 })
@@ -91,16 +179,16 @@ c["videorag"].command({
 
 ```
 app/
-  backend/api.py          # FastAPI — search, ingest trigger, stats
-  frontend/               # Next.js 14 UI
+  backend/api.py          # FastAPI — /search, /ingest/start, /stats, /frames/bulk
+  frontend/               # Next.js 14 UI (Dataset Explorer, ingest controls)
 modal_infra/
-  ingestor.py             # GPU pipeline: CLIP + Whisper + OCR → MongoDB
-  embedder.py             # Modal CLIP text embedder (optional, local fallback built-in)
+  ingestor.py             # Main GPU pipeline: download → sample → embed → write
+  embedder.py             # Standalone CLIP text embedder (Modal function)
   ocr.py                  # EasyOCR worker
-  transcription.py        # Whisper worker
-db.py                     # MongoDB client + vector search helpers
+  transcription.py        # Whisper transcription worker
+db.py                     # MongoDB client + $vectorSearch helpers
 api/index.py              # Vercel serverless entry point
-docs/                     # Atlas index setup, deploy guide
+docs/                     # Atlas index setup, deployment guide
 ```
 
 ---
@@ -111,93 +199,9 @@ docs/                     # Atlas index setup, deploy guide
 |---|---|
 | `MONGODB_URI` | MongoDB Atlas connection string |
 | `MONGODB_DB` | Database name (default: `videorag`) |
-| `MODAL_TOKEN_ID` | Modal API token (ingestion only) |
-| `MODAL_TOKEN_SECRET` | Modal API secret (ingestion only) |
-| `YOUTUBE_API_KEY` | YouTube Data API key (optional, for metadata) |
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|---|---|
-| Embedding model | `laion/CLIP-ViT-B-32-laion2B-s34B-b79K` |
-| Transcription | OpenAI Whisper (large-v2) |
-| OCR | EasyOCR |
-| Vector DB | MongoDB Atlas Vector Search |
-| GPU workers | Modal (A10G) |
-| Backend | FastAPI + uvicorn |
-| Frontend | Next.js 14, Tailwind CSS |
-| Deployment | Vercel (frontend + API) |
-
-Through Modal, we are able to process large datasources of videos by scaling the number of containers and distributing video analysis.
-
-
-## Challenges we ran into
-
-**1. Balancing Speed vs. Accuracy**
-- Processing every frame of a 2-hour game at 30fps = 216,000 frames
-- **Solution**: Adaptive frame sampling based on scene change detection, reducing processing while maintaining accuracy
-
-**2. Minimizing False Positives**
-- Single-modal approaches had 30-40% false positive rates
-- **Solution**: Multi-modal fusion (CLIP + Whisper + OCR) reduced false positives while keeping false negatives low as well
-
-**3. Handling Big Data at Scale**
-- GB-sized videos overwhelmed traditional processing pipelines
-- **Solution**: Modal's serverless GPU infrastructure auto-scales, processing 50+ concurrent videos without performance degradation
-
-**4. Real-time WebSocket Communication**
-- Users needed live progress updates without blocking backend
-- **Solution**: Asynchronous task queues with WebSocket event streaming
-
-## Accomplishments that we're proud of
-
-- **Built a working system in 36 hours** – from concept to a platform capable of ingesting videos and analyzing them
-
-- **Multi-product Bright Data integration** – Web Scraper API, SERP API, and Web Unlocker working seamlessly
-
-- **Low false positive rate** – Multi-modal fusion achieves research-grade accuracy
-
-- **Handles any input type** – Whether users have datasets, individual links, or nothing at all
-
-- **Non-technical accessible** – UI designed for researchers without programming experience
-
-- **Proven impact**: What took our team **2 weeks to collect manually** now takes **15 minutes**
-
-## What we learned
-
-**Technical Deep Dives**
-- Managing vector embeddings at scale with MongoDB Atlas Vector Search
-- Optimizing GPU utilization on Modal for cost-effective processing
-- Real-time WebSocket architecture for long-running video jobs
-- Multi-modal AI fusion techniques for improved accuracy
-
-**User-Centered Design**
-- Building intuitive interfaces for complex ML workflows
-- Abstracting technical complexity without sacrificing power-user features
-- Importance of progress indicators for long-running tasks
-
-**Big Data Engineering**
-- Efficient video streaming and processing pipelines
-- Balancing accuracy vs. computational cost
-- Handling diverse video formats, resolutions, and codecs
-
-## What's next for ShotSpot
-
-### 1. **Temporal Context Understanding**
-- **Current**: Frame-by-frame analysis treats each frame independently
-- **Implementation**: Add LSTM/Transformer layers to understand action sequences (e.g., "full three-point shot motion" not just "ball in air")
-- **Impact**: 15-20% accuracy improvement for complex multi-frame actions
-
-### 2. **Active Learning Pipeline**
-- **Current**: Static model without user feedback
-- **Implementation**: Users can mark incorrect clips, triggering model fine-tuning on Modal GPUs using their corrections as training data
-- **Impact**: Personalized models achieving 99%+ accuracy for specific use cases
-
-### 3. **Enterprise Team Features**
-- **Current**: Individual user accounts
-- **Implementation**: 
+| `MODAL_TOKEN_ID` | Modal API token (required for ingestion) |
+| `MODAL_TOKEN_SECRET` | Modal API secret (required for ingestion) |
+| `YOUTUBE_API_KEY` | YouTube Data API key (optional, used for video metadata) |
   - Shared dataset libraries with role-based access control
   - API keys for CI/CD integration
   - Usage analytics and cost tracking dashboards

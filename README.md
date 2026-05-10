@@ -1,82 +1,134 @@
-## What if you could search video like you search text?
+# ShotSpot — Search Video Like You Search Text
 
 ![ShotSpot Demo](example.png)
 
-![Generative Dataset Construction](poster.png)
+> 🥈 Runner-Up – Modal Inference Track &nbsp;|&nbsp; 🥉 3rd Place – Bright Data Best AI-Powered Web Data Track
 
-## 🏆 Awards
-
-- 🥈 **Runner-Up – Modal Inference Track**  
-  *$1,000 in credits + AirPods*
-
-- 🥉 **3rd Place – Bright Data Best AI-Powered Web Data Track**  
-  *$250 cash + $500 credits*
-## Inspiration
-
-Training computer vision models shouldn't require thousands of hours manually scrubbing through video footage. When we started building AI models for sports analytics, we discovered that **data collection and cleaning consumed 70-80% of our development time**, the true bottleneck in deploying real-world AI solutions. A researcher looking for "Steph Curry three-pointers" would need to watch hundreds of hours of game footage, manually looking through marked timestamps frame by frame.
-
-ShotSpot was born from this frustration. We wanted to democratize AI development by eliminating the tedious manual work, allowing researchers, developers, and even non-technical users to generate high-quality training datasets in minutes instead of months.
+---
 
 ## What it does
 
-ShotSpot is an **intelligent video data collection platform** that transforms how teams build computer vision datasets. Instead of manually scrubbing through hours of footage, users simply type what they're looking for, and our platform finds it and returns timestamps from specific videos.
+ShotSpot lets you search inside YouTube videos using plain English. You type what you're looking for — `"dancing man in black trenchcoat"` — and it returns the exact timestamps in the video where that matches, along with a clickable clip preview.
 
-### Core Features
+Under the hood it embeds every frame of a video with CLIP, stores the vectors in MongoDB Atlas, and does a cosine-similarity vector search against your query at runtime. No scrubbing. No manual labeling.
 
-**1. Multi-Modal Semantic Search**
-- Analyzes every frame using **OpenAI's CLIP** for visual understanding
-- Processes audio with **OpenAI's Whisper** for contextual accuracy
-- Extracts on-screen text via **EasyOCR** for complete semantic coverage
-- Combines all three signals with weighted cosine similarity scoring
+---
 
-**2. Flexible Input Methods**
-- **Upload datasets**: Provide your own spreadsheet of video links
-- **Individual videos**: Submit specific URLs to analyze
-- **Zero-input mode**: Let Bright Data automatically discover and curate relevant videos based on your query
+## How it works
 
-**3. Automated Dataset Generation**
-- Query: *"Steph Curry three-point shots"*
-- **Bright Data** searches and collects relevant highlight reels
-- ShotSpot processes videos and returns **timestamped clips** matching your query
-- Export ready-to-use training datasets with precise frame-level annotations
+### Ingestion pipeline (runs once per video)
+1. **Download** — yt-dlp pulls the YouTube video
+2. **Frame sampling** — one frame every 5 seconds
+3. **CLIP visual embedding** — `laion/CLIP-ViT-B-32-laion2B-s34B-b79K` encodes each frame into a 512-dim vector
+4. **Whisper transcription** — audio is transcribed and chunked by timestamp
+5. **OCR** — EasyOCR extracts any on-screen text
+6. **Fusion** — visual + text (transcript + OCR) embeddings are averaged and renormalized
+7. **MongoDB write** — each frame document stored with its embedding, timestamp, and source URL
 
-**4. Production-Ready Infrastructure**
-- **Modal**: GPU-accelerated processing scaled automatically
-- **MongoDB Atlas**: Vector embeddings stored with semantic search indexing
-- **FastAPI backend**: RESTful API for programmatic access
-- **Responsive web interface**: Intuitive UI accessible to non-developers
+The ingestion pipeline runs on Modal GPU workers (A10G). The vector index (`frame_vectors`, cosine, 512-dim) lives in MongoDB Atlas.
 
-### Architecture
+### Search (real-time)
+1. User query → CLIP text encoder → 512-dim vector
+2. `$vectorSearch` against `frames` collection in MongoDB Atlas
+3. Results ranked by cosine similarity, grouped into continuous timestamp segments
+4. Frontend renders clickable frame cards that open an embedded YouTube player at the exact second
 
-**Frontend**
-- Modern web interface built for researchers and ML engineers
-- Real-time progress tracking with WebSocket connections
-- Drag-and-drop dataset and url uploads
-- Interactive clip preview and export
+---
 
-**Backend (FastAPI + MongoDB)**
-- RESTful API handling video processing jobs
-- MongoDB Atlas with vector search indexes for semantic retrieval
-- Background task queues for long-running video analysis
-- Secure authentication and dataset management
+## Running locally
 
-**AI Processing Pipeline (Modal + GPU)**
-- **CLIP embeddings**: Extract 512-dimensional vectors for every moment
-- **Whisper transcription**: Process audio streams for contextual understanding
-- **OCR detection**: Tesseract-based text extraction from frames
-- **Fusion algorithm**: Weighted averaging of visual, audio, and text embeddings
-- All models run on Modal's serverless GPU infrastructure for instant scaling
+### Prerequisites
+- Python 3.11+
+- Node.js 18+
+- MongoDB Atlas cluster (free M0 works)
+- `.env` file (see `.env.example`)
 
-**Data Collection (Bright Data Integration)**
-- **Web Scraper API**: Automatically discover YouTube videos matching user queries
-- **SERP API**: Search capabilities for video content across platforms
-- **MCP Integration**: LLM-powered query understanding for intelligent dataset curation
+### Backend
 
-### Technical Workflow
+```bash
+pip install -r requirements.txt
+uvicorn app.backend.api:app --reload --port 8000
+```
 
-We run an interconnected pipeline of models to preprocess embeddings for indexing videos. Regularly sampled image frames are fed to the visual encoder of CLIP to generate embeddings based on visual information. We also perform OCR to pull relevant textual information. Audio data is split into segments and piped through the Whisper model to generate transcriptions. These are concatenated with OCR results and fed into the textual encoder of CLIP. This embedding is summed and renormalized with the previous visual embeddings to gain a multimodal semantic representation of each moment, which is stored in MongoDB.
+The backend loads CLIP locally on CPU (no GPU required for search). The model (~605 MB) is downloaded once and cached in `~/.cache/huggingface/`.
 
-User search queries are similarly encoded through CLIP, and the resulting embedding is used to evaluate candidates through cosine similarity. We merge temporally close moments and return timestamped results per video.
+### Frontend
+
+```bash
+cd app/frontend
+npm install
+npm run dev
+```
+
+Open `http://localhost:3000`.
+
+### MongoDB vector index
+
+The Atlas vector index must exist before search works. Create it once:
+
+```python
+from pymongo import MongoClient
+import certifi, os
+from dotenv import load_dotenv
+load_dotenv()
+
+c = MongoClient(os.environ["MONGODB_URI"], tlsCAFile=certifi.where())
+c["videorag"].command({
+    "createSearchIndexes": "frames",
+    "indexes": [{
+        "name": "frame_vectors",
+        "type": "vectorSearch",
+        "definition": {
+            "fields": [{"type": "vector", "path": "embedding", "numDimensions": 512, "similarity": "cosine"}]
+        }
+    }]
+})
+```
+
+---
+
+## Project structure
+
+```
+app/
+  backend/api.py          # FastAPI — search, ingest trigger, stats
+  frontend/               # Next.js 14 UI
+modal_infra/
+  ingestor.py             # GPU pipeline: CLIP + Whisper + OCR → MongoDB
+  embedder.py             # Modal CLIP text embedder (optional, local fallback built-in)
+  ocr.py                  # EasyOCR worker
+  transcription.py        # Whisper worker
+db.py                     # MongoDB client + vector search helpers
+api/index.py              # Vercel serverless entry point
+docs/                     # Atlas index setup, deploy guide
+```
+
+---
+
+## Environment variables
+
+| Variable | Description |
+|---|---|
+| `MONGODB_URI` | MongoDB Atlas connection string |
+| `MONGODB_DB` | Database name (default: `videorag`) |
+| `MODAL_TOKEN_ID` | Modal API token (ingestion only) |
+| `MODAL_TOKEN_SECRET` | Modal API secret (ingestion only) |
+| `YOUTUBE_API_KEY` | YouTube Data API key (optional, for metadata) |
+
+---
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Embedding model | `laion/CLIP-ViT-B-32-laion2B-s34B-b79K` |
+| Transcription | OpenAI Whisper (large-v2) |
+| OCR | EasyOCR |
+| Vector DB | MongoDB Atlas Vector Search |
+| GPU workers | Modal (A10G) |
+| Backend | FastAPI + uvicorn |
+| Frontend | Next.js 14, Tailwind CSS |
+| Deployment | Vercel (frontend + API) |
 
 Through Modal, we are able to process large datasources of videos by scaling the number of containers and distributing video analysis.
 

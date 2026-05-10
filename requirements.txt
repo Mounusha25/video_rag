@@ -1,0 +1,14 @@
+pymongo>=4.6.0
+numpy>=1.24.0
+python-dotenv>=1.0.0
+certifi
+fastapi>=0.100.0
+uvicorn>=0.27.0
+requests
+duckduckgo-search>=6.0.0
+# Removed heavy/unused libs for Vercel
+modal
+# Note: uvicorn is also provided by the Vercel runtime — safe to keep here for Docker/Fly.io
+# opencv-python-headless
+# openai
+# Removed: torch, torchvision, transformers, huggingface-hub, yt-dlp, pillow

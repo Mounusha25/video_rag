@@ -6,3 +6,4 @@ __pycache__/
 logs/
 node_modules/
 .next/
+cookies.txt

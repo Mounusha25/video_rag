@@ -20,8 +20,8 @@ const config: Config = {
         background: "#09090b", // Zinc 950
         foreground: "#fafafa", // Zinc 50
         card: "#09090b",
-        "neon-green": "#22c55e",
-        "neon-amber": "#f59e0b",
+        "neon-green": "#F5C518",
+        "neon-amber": "#A3A3A3",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         primary: {

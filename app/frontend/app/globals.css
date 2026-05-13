@@ -46,12 +46,12 @@
   }
 }
 
-/* Glassmorphism utility */
+/* Panel utility */
 .glass-panel {
-  @apply bg-zinc-950/70 border border-zinc-800 backdrop-blur-md rounded-xl;
+  @apply bg-[#111111] border border-[#262626] rounded-xl;
 }
 .neon-border {
-  @apply border border-zinc-800 hover:border-zinc-600 transition-colors duration-200;
+  @apply border border-[#262626] hover:border-[#F5C518] transition-colors duration-200;
 }
 .active-pulse {
   @apply animate-pulse text-neon-green;

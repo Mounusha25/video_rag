@@ -6,7 +6,7 @@ import {
   Terminal, Activity, Radio, Cpu, Download, 
   Search, Shield, Zap, Database, Play, Pause,
   Globe, Video, Layers, AlertCircle, X, Plus, Trash2,
-  ListVideo, Youtube, Twitch, Film
+  ListVideo, Youtube, Twitch, Film, Loader2
 } from "lucide-react";
 import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip } from "recharts";
 import axios from "axios";
@@ -570,20 +570,19 @@ export default function Dashboard() {
   }, [isIngesting, prompt, url]);
 
   return (
-    <div className="flex flex-col h-screen w-full bg-[#09090b] text-zinc-300 font-mono overflow-hidden">
+    <div className="flex flex-col h-screen w-full bg-[#0A0A0A] text-zinc-300 font-mono overflow-hidden">
         {/* TOP BAR / TABS */}
-        <div className="h-14 border-b border-zinc-900 bg-zinc-950 flex items-center px-6 justify-between flex-shrink-0">
+        <div className="h-14 border-b border-[#262626] bg-[#111111] flex items-center px-6 justify-between flex-shrink-0">
              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-neon-green rounded-full animate-pulse" />
-                <span className="font-bold text-white tracking-widest text-lg">SHOTSPOT</span>
+                <span className="font-extrabold text-neon-green tracking-[0.05em] text-lg">SHOTSPOT</span>
              </div>
              
-             <div className="flex bg-zinc-900 p-1 rounded-lg">
+             <div className="flex border-b border-[#262626]">
                 <button 
                     onClick={() => setActiveTab("analyze")}
                     className={cn(
-                        "px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2",
-                        activeTab === "analyze" ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-300"
+                        "px-4 py-3 text-xs font-bold transition-all flex items-center gap-2 border-b-2 -mb-px",
+                        activeTab === "analyze" ? "text-neon-green border-neon-green" : "text-[#A3A3A3] border-transparent hover:text-[#F5F5F5]"
                     )}
                 >
                     <Activity size={14} /> ANALYZE DATA
@@ -591,8 +590,8 @@ export default function Dashboard() {
                 <button 
                     onClick={() => setActiveTab("create")}
                     className={cn(
-                        "px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2",
-                        activeTab === "create" ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-300"
+                        "px-4 py-3 text-xs font-bold transition-all flex items-center gap-2 border-b-2 -mb-px",
+                        activeTab === "create" ? "text-neon-green border-neon-green" : "text-[#A3A3A3] border-transparent hover:text-[#F5F5F5]"
                     )}
                 >
                     <Database size={14} /> CREATE DATA
@@ -600,8 +599,8 @@ export default function Dashboard() {
                 <button 
                     onClick={() => setActiveTab("import")}
                     className={cn(
-                        "px-4 py-1.5 rounded-md text-xs font-bold transition-all flex items-center gap-2",
-                        activeTab === "import" ? "bg-zinc-800 text-white shadow-sm" : "text-zinc-500 hover:text-zinc-300"
+                        "px-4 py-3 text-xs font-bold transition-all flex items-center gap-2 border-b-2 -mb-px",
+                        activeTab === "import" ? "text-neon-green border-neon-green" : "text-[#A3A3A3] border-transparent hover:text-[#F5F5F5]"
                     )}
                 >
                     <Download size={14} /> IMPORT DATASET
@@ -632,11 +631,8 @@ export default function Dashboard() {
                                 value={createPrompt}
                                 onChange={(e) => setCreatePrompt(e.target.value)}
                                 placeholder="Describe the visual elements you want to extract (e.g., 'Rocket launches', 'People holding Red Bull cans', 'Specific dance moves')..."
-                                className="w-full bg-zinc-900 border border-zinc-800 rounded p-3 text-sm text-white focus:outline-none focus:border-neon-green transition-colors min-h-[100px]"
+                                className="w-full bg-zinc-900 border border-zinc-800 rounded p-3 text-sm text-white focus:outline-none focus:shadow-[0_0_0_2px_rgba(245,197,24,0.4)] transition-shadow min-h-[100px]"
                             />
-                        </div>
-
-                        <div className="flex justify-between items-center pt-4 border-t border-zinc-800">
                             <h2 className="text-sm font-bold uppercase text-zinc-400">
                                 Source URLs <span className="text-zinc-600 normal-case text-xs">(Optional)</span>
                             </h2>
@@ -654,7 +650,7 @@ export default function Dashboard() {
                                     <input 
                                         type="text" 
                                         placeholder="https://www.twitch.tv/videos/..."
-                                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded p-3 text-sm text-white focus:outline-none focus:border-neon-green transition-colors"
+                                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded p-3 text-sm text-white focus:outline-none focus:shadow-[0_0_0_2px_rgba(245,197,24,0.4)] transition-shadow"
                                         value={u}
                                         onChange={(e) => {
                                             const newUrls = [...scrapeUrls];
@@ -686,7 +682,7 @@ export default function Dashboard() {
                                     "px-8 py-3 rounded font-bold uppercase tracking-widest text-sm transition-all flex items-center gap-2",
                                     isScraping 
                                       ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" 
-                                      : "bg-neon-green text-black hover:bg-white hover:shadow-[0_0_20px_rgba(34,197,94,0.4)]"
+                                      : "bg-neon-green text-[#0A0A0A] hover:brightness-110"
                                 )}
                             >
                                 {isScraping ? <Activity className="animate-spin" /> : <Play size={18} fill="currentColor" />}
@@ -795,7 +791,6 @@ export default function Dashboard() {
                              {datasetFrames.length === 0 ? (
                                  <div className="glass-panel p-12 flex flex-col items-center justify-center text-zinc-500 space-y-4 border-dashed">
                                      <div className="relative">
-                                         <div className="absolute inset-0 bg-neon-green/20 blur-xl rounded-full animate-pulse" />
                                          <Cpu size={48} className="relative z-10 animate-pulse text-neon-green" />
                                      </div>
                                      <div className="text-center space-y-1">
@@ -811,7 +806,7 @@ export default function Dashboard() {
                                     {datasetFrames.map((frame, i) => (
                                         <div 
                                             key={i} 
-                                            className="group relative aspect-video bg-black rounded-lg border border-zinc-800 overflow-hidden hover:border-neon-green transition-all cursor-pointer shadow-lg hover:shadow-neon-green/10"
+                                            className="group relative aspect-video bg-black rounded-lg border border-[#262626] overflow-hidden hover:border-l-[#F5C518] hover:border-l-2 transition-all cursor-pointer shadow-lg"
                                             onClick={() => setPipFrame({
                                                 source_url: frame.source_url,
                                                 timestamp_seconds: frame.timestamp_seconds,
@@ -878,7 +873,7 @@ export default function Dashboard() {
                                             
                                             {/* Hover Play Button */}
                                             <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40 backdrop-blur-[1px]">
-                                                <div className="w-10 h-10 rounded-full bg-neon-green text-black flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
+                                                <div className="w-10 h-10 rounded-full bg-neon-green text-[#0A0A0A] flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform">
                                                     <Play size={20} fill="currentColor" />
                                                 </div>
                                             </div>
@@ -902,7 +897,7 @@ export default function Dashboard() {
                       onClick={() => setPipFrame(null)}
                     >
                       <div
-                        className="relative w-full max-w-5xl aspect-video rounded-xl overflow-hidden border-2 border-neon-green/50 bg-black shadow-2xl shadow-neon-green/20"
+                        className="relative w-full max-w-5xl aspect-video rounded-xl overflow-hidden border border-[#262626] bg-black shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <button
@@ -913,7 +908,7 @@ export default function Dashboard() {
                         >
                           <X size={20} />
                         </button>
-                        <div className="absolute top-4 left-4 z-30 px-3 py-1.5 rounded bg-black/80 text-xs text-neon-green font-mono border border-neon-green/30 truncate max-w-[80%] flex items-center gap-2">
+                        <div className="absolute top-4 left-4 z-30 px-3 py-1.5 rounded bg-black/80 text-xs text-[#A3A3A3] font-mono border border-[#262626] truncate max-w-[80%] flex items-center gap-2">
                           <Play size={12} fill="currentColor" />
                           <span className="font-bold">{pipFrame.title}</span> 
                           <span className="text-zinc-500">|</span> 
@@ -939,7 +934,7 @@ export default function Dashboard() {
                               href={pipFrame.source_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="bg-neon-green text-black px-6 py-2 rounded font-bold hover:bg-white hover:shadow-lg transition-all flex items-center gap-2"
+                              className="bg-neon-green text-[#0A0A0A] px-6 py-2 rounded font-bold hover:brightness-110 transition-all flex items-center gap-2"
                             >
                               Open in New Tab <Globe size={16} />
                             </a>
@@ -976,7 +971,7 @@ export default function Dashboard() {
                                 value={importPrompt}
                                 onChange={(e) => setImportPrompt(e.target.value)}
                                 placeholder="Describe what you want to find in these videos..."
-                                className="w-full bg-zinc-900 border border-zinc-800 rounded p-3 text-sm text-white focus:outline-none focus:border-neon-green transition-colors min-h-[100px]"
+                                className="w-full bg-zinc-900 border border-zinc-800 rounded p-3 text-sm text-white focus:outline-none focus:shadow-[0_0_0_2px_rgba(245,197,24,0.4)] transition-shadow min-h-[100px]"
                             />
                         </div>
 
@@ -1005,11 +1000,10 @@ export default function Dashboard() {
                                     "px-8 py-3 rounded font-bold uppercase tracking-widest text-sm transition-all flex items-center gap-2",
                                     isImporting || importedUrls.length === 0
                                       ? "bg-zinc-800 text-zinc-500 cursor-not-allowed" 
-                                      : "bg-neon-green text-black hover:bg-white hover:shadow-[0_0_20px_rgba(34,197,94,0.4)]"
+                                      : "bg-neon-green text-[#0A0A0A] hover:brightness-110"
                                 )}
                             >
-                                {isImporting ? <Activity className="animate-spin" /> : <Play size={18} fill="currentColor" />}
-                                {isImporting ? "Processing Import..." : "Start Import Job"}
+                                {isImporting ? <><Loader2 className="animate-spin" size={14}/> IMPORTING...</> : <><Download size={14}/> START IMPORT JOB</>}
                             </button>
                         </div>
                     </div>
@@ -1043,7 +1037,7 @@ export default function Dashboard() {
                                 {datasetFrames.map((frame, i) => (
                                     <div 
                                         key={i} 
-                                        className="group relative aspect-video bg-black rounded-lg border border-zinc-800 overflow-hidden hover:border-neon-green transition-all cursor-pointer shadow-lg hover:shadow-neon-green/10"
+                                        className="group relative aspect-video bg-black rounded-lg border border-[#262626] overflow-hidden hover:border-l-[#F5C518] hover:border-l-2 transition-all cursor-pointer shadow-lg"
                                         onClick={() => setPipFrame({
                                             source_url: frame.source_url,
                                             timestamp_seconds: frame.timestamp_seconds,
@@ -1088,7 +1082,7 @@ export default function Dashboard() {
                       onClick={() => setPipFrame(null)}
                     >
                       <div
-                        className="relative w-full max-w-5xl aspect-video rounded-xl overflow-hidden border-2 border-neon-green/50 bg-black shadow-2xl shadow-neon-green/20"
+                        className="relative w-full max-w-5xl aspect-video rounded-xl overflow-hidden border border-[#262626] bg-black shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <button
@@ -1099,7 +1093,7 @@ export default function Dashboard() {
                         >
                           <X size={20} />
                         </button>
-                        <div className="absolute top-4 left-4 z-30 px-3 py-1.5 rounded bg-black/80 text-xs text-neon-green font-mono border border-neon-green/30 truncate max-w-[80%] flex items-center gap-2">
+                        <div className="absolute top-4 left-4 z-30 px-3 py-1.5 rounded bg-black/80 text-xs text-[#A3A3A3] font-mono border border-[#262626] truncate max-w-[80%] flex items-center gap-2">
                           <Play size={12} fill="currentColor" />
                           <span className="font-bold">{pipFrame.title}</span> 
                           <span className="text-zinc-500">|</span> 
@@ -1125,7 +1119,7 @@ export default function Dashboard() {
                               href={pipFrame.source_url}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="bg-neon-green text-black px-6 py-2 rounded font-bold hover:bg-white hover:shadow-lg transition-all flex items-center gap-2"
+                              className="bg-neon-green text-[#0A0A0A] px-6 py-2 rounded font-bold hover:brightness-110 transition-all flex items-center gap-2"
                             >
                               Open in New Tab <Globe size={16} />
                             </a>
@@ -1167,7 +1161,7 @@ export default function Dashboard() {
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="e.g. 'Red Bull Cans', 'Specific Dance'"
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2 pl-10 pr-4 text-sm text-white focus:outline-none focus:border-neon-green transition-colors"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2 pl-10 pr-4 text-sm text-white focus:outline-none focus:shadow-[0_0_0_2px_rgba(245,197,24,0.4)] transition-shadow"
                 />
               </div>
             </div>
@@ -1177,7 +1171,7 @@ export default function Dashboard() {
                  <label className="text-xs text-zinc-500 uppercase font-bold">Target Video URL</label>
                  {/* Source Indicator */}
                  {url && source !== "Unknown" ? (
-                    <span className="text-[10px] text-neon-green bg-neon-green/10 border border-neon-green/20 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider fade-in">
+                    <span className="text-[10px] text-neon-green bg-neon-green/10 border border-neon-green/30 px-1.5 py-0.5 rounded font-bold uppercase tracking-wider fade-in">
                        {source} DETECTED
                     </span>
                  ) : url && (
@@ -1209,7 +1203,7 @@ export default function Dashboard() {
                     else setSource("Unknown");
                   }}
                   placeholder="e.g. YouTube / Twitch URL"
-                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2 pl-10 pr-4 text-sm text-white focus:outline-none focus:border-neon-green transition-colors"
+                  className="w-full bg-zinc-900 border border-zinc-800 rounded-lg py-2 pl-10 pr-4 text-sm text-white focus:outline-none focus:shadow-[0_0_0_2px_rgba(245,197,24,0.4)] transition-shadow"
                 />
               </div>
             </div>
@@ -1288,10 +1282,8 @@ export default function Dashboard() {
                       <div className="flex justify-between text-[10px] uppercase font-bold text-zinc-500 font-mono">
                           <span>Ingestion Progress</span>
                           <span className="text-neon-green">{Math.round(ingestionProgress.percent)}% ({ingestionProgress.current}/{ingestionProgress.total})</span>
-                      </div>
-                      <div className="h-1.5 w-full bg-zinc-800 rounded-full overflow-hidden border border-zinc-800">
                           <div 
-                              className="h-full bg-neon-green shadow-[0_0_10px_currentColor] transition-all duration-500 ease-out relative"
+                              className="h-full bg-neon-green transition-all duration-500 ease-out relative"
                               style={{ width: `${Math.max(2, ingestionProgress.percent)}%` }}
                           >
                             <div className="absolute inset-0 bg-white/20 animate-pulse" />
@@ -1306,7 +1298,7 @@ export default function Dashboard() {
                   "w-full py-4 rounded-lg font-bold text-sm tracking-widest uppercase transition-all flex items-center justify-center gap-2 shadow-lg",
                   isIngesting 
                     ? "bg-red-900/50 border border-red-500 text-red-100 hover:bg-red-900" 
-                    : "bg-neon-green/10 border border-neon-green text-neon-green hover:bg-neon-green/20"
+                    : "bg-neon-green text-[#0A0A0A] font-bold hover:brightness-110"
                 )}
              >
                 {isIngesting ? <><Pause size={16} /> ABORT SEQUENCE</> : <><Play size={16} /> INITIALIZE INGEST</>}
@@ -1366,7 +1358,7 @@ export default function Dashboard() {
                     initial={{ top: "-10%" }}
                     animate={{ top: "110%" }}
                     transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
-                    className="absolute left-0 right-0 h-20 bg-gradient-to-b from-transparent via-neon-green/10 to-transparent z-10 pointer-events-none"
+                    className="absolute left-0 right-0 h-20 bg-gradient-to-b from-transparent via-neon-green/5 to-transparent z-10 pointer-events-none"
                  />
               )}
 
@@ -1381,17 +1373,17 @@ export default function Dashboard() {
                 if (isActive) {
                     if (isIngesting) {
                         // ACTIVE INGESTION
-                        borderColor = isGPU ? "#22c55e" : "#f59e0b"; // Neon Green : Amber
-                        bgColor = isGPU ? "rgba(34, 197, 94, 0.2)" : "rgba(245, 158, 11, 0.2)";
+                        borderColor = isGPU ? "#F5C518" : "#525252"; // Yellow : Muted gray
+                        bgColor = isGPU ? "rgba(245, 197, 24, 0.15)" : "rgba(82, 82, 82, 0.15)";
                     } else {
                         // PROVISIONED (IDLE)
-                        borderColor = isGPU ? "#15803d" : "#b45309"; // Darker Green : Darker Amber
-                        bgColor = isGPU ? "rgba(21, 128, 61, 0.1)" : "rgba(180, 83, 9, 0.1)"; 
+                        borderColor = isGPU ? "#2A2000" : "#27272a"; // Dark yellow : Dark gray
+                        bgColor = isGPU ? "rgba(245, 197, 24, 0.05)" : "rgba(82, 82, 82, 0.05)"; 
                     }
                 } else {
                     // UNALLOCATED
                     borderColor = "#27272a"; 
-                    bgColor = "#09090b";
+                    bgColor = "#0A0A0A";
                 }
                 
                 return (
@@ -1413,8 +1405,7 @@ export default function Dashboard() {
                      <motion.div 
                         animate={{ opacity: [0.3, 1, 0.3] }}
                         transition={{ repeat: Infinity, duration: 1 + Math.random() }}
-                        className={cn("w-1.5 h-1.5 rounded-full shadow-[0_0_5px_currentColor]", isGPU ? "bg-neon-green text-neon-green" : "bg-neon-amber text-neon-amber")}
-                     />
+                        className={cn("w-1.5 h-1.5 rounded-full", isGPU ? "bg-neon-green" : "bg-[#525252]")}/>
                    )}
                    
                    {/* Tooltip */}
@@ -1438,7 +1429,7 @@ export default function Dashboard() {
                   onClick={() => setPipFrame(null)}
                 >
                   <div
-                    className="relative w-full max-w-2xl aspect-video rounded-xl overflow-hidden border-2 border-neon-green/50 bg-black shadow-2xl shadow-neon-green/20"
+                    className="relative w-full max-w-2xl aspect-video rounded-xl overflow-hidden border border-[#262626] bg-black shadow-2xl"
                     onClick={(e) => e.stopPropagation()}
                   >
                     <button
@@ -1449,7 +1440,7 @@ export default function Dashboard() {
                     >
                       <X size={16} />
                     </button>
-                    <div className="absolute top-2 left-2 z-30 px-2 py-1 rounded bg-black/80 text-[10px] text-neon-green font-mono border border-neon-green/30 truncate max-w-[80%]">
+                    <div className="absolute top-2 left-2 z-30 px-2 py-1 rounded bg-black/80 text-[10px] text-[#A3A3A3] font-mono border border-[#262626] truncate max-w-[80%]">
                       {pipFrame.title} · {pipFrame.timestamp_seconds != null ? `${Math.floor(pipFrame.timestamp_seconds / 60)}m ${pipFrame.timestamp_seconds % 60}s` : ""}
                     </div>
                     {embedUrlForSource(pipFrame.source_url, pipFrame.timestamp_seconds ?? 0) ? (
@@ -1603,7 +1594,7 @@ export default function Dashboard() {
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     key={i}
-                    className="group relative aspect-video bg-zinc-900 border border-zinc-800 rounded-lg overflow-hidden hover:border-neon-green transition-all cursor-pointer"
+                    className="group relative aspect-video bg-zinc-900 border border-[#262626] rounded-lg overflow-hidden hover:border-l-[#F5C518] hover:border-l-2 transition-all cursor-pointer"
                   >
                    {/* Twitch Logo Overlay */}
                     {frame.source_url && frame.source_url.includes('twitch') ? (
@@ -1614,7 +1605,7 @@ export default function Dashboard() {
                         <img src={frame.url} className="w-full h-full object-cover opacity-60 group-hover:opacity-80 transition-opacity" alt="" />
                     )}
                     <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <div className="w-10 h-10 bg-neon-green/90 rounded-full flex items-center justify-center shadow-lg shadow-neon-green/20 backdrop-blur-sm">
+                        <div className="w-10 h-10 bg-neon-green/90 rounded-full flex items-center justify-center shadow-lg backdrop-blur-sm">
                             <Play size={18} className="text-black ml-1" fill="currentColor" />
                         </div>
                     </div>
@@ -1644,15 +1635,14 @@ export default function Dashboard() {
            )}
         </div>
         
-        <div className="p-4 border-t border-zinc-800 bg-zinc-950/50">
-           <button className="w-full py-2 bg-zinc-100 text-zinc-900 font-bold text-xs rounded hover:bg-white flex items-center justify-center gap-2">
+        <div className="p-4 border-t border-[#262626] bg-[#0A0A0A]">
+           <button className="w-full py-2 bg-transparent border border-[#262626] text-[#A3A3A3] font-bold text-xs rounded hover:border-neon-green hover:text-neon-green transition-colors flex items-center justify-center gap-2">
              <Download size={14} /> EXPORT DATASET (JSON)
            </button>
         </div>
+        </div>
       </div>
-      
-      </div>
-        )}
+      )}
         </div>
     </div>
   );

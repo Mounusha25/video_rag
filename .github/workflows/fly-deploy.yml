@@ -5,14 +5,36 @@ on:
   push:
     branches:
       - main
+    # docs, license and image changes should not trigger a deploy
+    paths-ignore:
+      - "**.md"
+      - "LICENSE"
+      - "docs/**"
+      - "*.png"
+      - "*.jpg"
+  workflow_dispatch:   # deploy by hand from Actions -> Fly Deploy -> Run workflow
 jobs:
   deploy:
     name: Deploy app
     runs-on: ubuntu-latest
     concurrency: deploy-group    # optional: ensure only one action runs at a time
+    env:
+      FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
     steps:
+      # Without a token the deploy cannot work, so skip it cleanly instead of failing every push.
+      # Add FLY_API_TOKEN under Settings -> Secrets and variables -> Actions to turn deploys on.
+      - name: Check Fly token
+        id: fly
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::notice::FLY_API_TOKEN is not set, skipping deploy"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
       - uses: actions/checkout@v4
+        if: steps.fly.outputs.ready == 'true'
       - uses: superfly/flyctl-actions/setup-flyctl@master
+        if: steps.fly.outputs.ready == 'true'
       - run: flyctl deploy --remote-only
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        if: steps.fly.outputs.ready == 'true'

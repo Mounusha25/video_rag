@@ -1,78 +1,60 @@
-# Deploy the API (non-local)
+# Deployment
 
-So Modal (or any client) can call your API from the internet.
+ShotSpot separates the lightweight FastAPI service from GPU inference. The API
+image calls Modal for query embeddings and ingestion, so it does not install
+PyTorch or model weights.
 
----
+## Required configuration
 
-## Option 1: Fly.io (recommended)
+Configure these as platform secrets, never in source control:
 
-**1. Install Fly CLI**  
-https://fly.io/docs/hands-on/install-flyctl/
+- `MONGODB_URI`
+- `MONGODB_DB` (normally `videorag`)
+- `MODAL_TOKEN_ID`
+- `MODAL_TOKEN_SECRET`
+- `ALLOWED_ORIGINS` (comma-separated frontend origins)
+- `API_KEY` (recommended for Modal callback routes)
 
-**2. Log in and create app (first time)**  
+The Modal `mongo` secret must contain MongoDB access. Its ingestion environment
+should also define `VECTOR_API_URL` and `VECTOR_API_KEY` so progress callbacks
+can reach the API.
+
+## Deploy Modal functions
+
 ```bash
-cd "/Users/fgarcia/AI Personal Project/treehacks-2026"
-fly auth login
-fly launch --no-deploy
+modal deploy modal_infra/ingestor.py
+modal deploy modal_infra/embedder.py
 ```
-When asked for app name, use e.g. `treehacks-vector-api`. Say no to PostgreSQL if offered.
 
-**3. Set secrets (your MongoDB and API key)**  
+The backend currently looks up:
+
+- app: `treehacks-video-ingestor-v2`, function: `ingest_video_orchestrator`
+- app: `clip-embedder`, function: `embed_text`
+
+## Validate the container
+
 ```bash
-fly secrets set MONGODB_URI="mongodb+srv://USER:PASSWORD@treehacks2026.afbqken.mongodb.net/"
-fly secrets set MONGODB_DB="TreeHacks2026"
-fly secrets set API_KEY="your-modal-api-key"
+docker build -t shotspot-api .
+docker run --env-file .env -p 8000:8000 shotspot-api
+curl http://127.0.0.1:8000/health
 ```
-Use your real values. No quotes inside the URI if it has special chars, or use single quotes.
 
-**4. Deploy**  
+`/health` returns HTTP 503 until MongoDB is reachable.
+
+## Fly.io
+
+After configuring secrets with `fly secrets set`, deploy with:
+
 ```bash
 fly deploy
-```
-
-**5. Get your URL**  
-```bash
 fly status
-# or open the app
-fly open
 ```
-Your API URL is: **`https://treehacks-vector-api.fly.dev`** (or whatever app name you chose). Use that as **VECTOR_API_URL** in Modal.
 
-**Health check:** `https://your-app.fly.dev/health`
+The GitHub **Fly Deploy** workflow is intentionally manual and requires the
+`FLY_API_TOKEN` repository secret plus approval for the `production`
+environment. Normal pushes run CI without attempting a deployment.
 
----
+## Frontend
 
-## Option 2: Railway
-
-**1. Install Railway CLI** (optional) or use the dashboard: https://railway.app
-
-**2. New project → Deploy from GitHub** (connect repo) or **Empty project → Deploy from Dockerfile**.
-
-**3. Root directory:** project root. Build: Dockerfile. Start command is in the Dockerfile.
-
-**4. Variables (in Railway dashboard):**  
-- `MONGODB_URI`  
-- `MONGODB_DB`  
-- `API_KEY` (optional)
-
-**5. Deploy.** Railway gives you a URL like `https://your-app.up.railway.app`. Use that as **VECTOR_API_URL**.
-
----
-
-## Option 3: Render
-
-**1. Go to https://render.com** → New → Web Service.
-
-**2. Connect repo** or use “Docker” and paste Dockerfile.
-
-**3. Environment:** Add `MONGODB_URI`, `MONGODB_DB`, `API_KEY`.
-
-**4. Deploy.** URL like `https://your-service.onrender.com` → use as **VECTOR_API_URL**.
-
----
-
-## After deploy
-
-- **API URL** = the base URL (e.g. `https://treehacks-vector-api.fly.dev`). No path.
-- In **Modal**: set secret **VECTOR_API_URL** = that URL, **VECTOR_API_KEY** = same as **API_KEY**.
-- Test: `curl https://your-url/health`
+Deploy `app/frontend` separately and set `NEXT_PUBLIC_API_URL` to the public API
+base URL. Add the frontend origin to `ALLOWED_ORIGINS` on the API.

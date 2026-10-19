@@ -297,6 +297,7 @@ class VideoWorker:
         return len(results)
 
     def _push_results(self, vectors):
+        import certifi
         from pymongo import MongoClient
 
         uri = os.environ.get("MONGODB_URI")
@@ -312,7 +313,7 @@ class VideoWorker:
                     serverSelectionTimeoutMS=15000,
                     connectTimeoutMS=15000,
                     tls=True,
-                    tlsAllowInvalidCertificates=True,
+                    tlsCAFile=certifi.where(),
                 )
                 col = client[db_name]["frames"]
                 # Convert list-of-dicts; rename 'vector' -> 'embedding' for Atlas Vector Search

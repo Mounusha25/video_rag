@@ -1,8 +1,8 @@
 # app/backend/api.py
 import os
 import sys
+import hmac
 from typing import Any, List, Optional
-import random
 import time
 
 # Load env vars from the root .env file
@@ -14,86 +14,93 @@ load_dotenv(os.path.join(project_root, ".env"))
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 import modal
 import requests
 import zipfile
 import io
 import json
 
-# Import the Modal function directly
-try:
-    from modal_infra.ingestor import ingest_video_orchestrator
-except ImportError as e:
-    print(f"Warning: Could not import ingestor: {e}")
-    ingest_video_orchestrator = None
-
 # --- MongoDB Integration ---
-from db import get_collection, search
+from db import get_client, get_collection, search
 
 try:
     from time_stamp_grouping import get_timestamps as get_timestamp_segments
 except ImportError:
     get_timestamp_segments = None
 
-# --- CLIP Model (Text Only) ---
-# We load a small CLIP model to embed text queries for search
-try:
-    from transformers import CLIPProcessor, CLIPModel
-    import torch
-    print("Loading CLIP (Text Encoder - LAION-2B)...")
-    model_id = "laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
-    processor = CLIPProcessor.from_pretrained(model_id)
-    model = CLIPModel.from_pretrained(model_id)
-    print("CLIP Loaded.")
-except ImportError:
-    print("Warning: transformers/torch not installed. Functionality will use remote Modal fallback.")
-    processor = None
-    model = None
+# --- CLIP query embedding ---
+# Production defaults to the deployed Modal embedder so the API container stays
+# small. Set EMBEDDING_BACKEND=local and install requirements-local.txt to run
+# the same text encoder in-process for offline development.
+MODEL_ID = "laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
+_local_processor = None
+_local_model = None
+
+
+def _load_local_embedder():
+    global _local_processor, _local_model
+    if _local_model is None:
+        try:
+            import torch
+            from transformers import CLIPModel, CLIPProcessor
+        except ImportError as exc:
+            raise RuntimeError(
+                "Local embedding requires requirements-local.txt"
+            ) from exc
+        _local_processor = CLIPProcessor.from_pretrained(MODEL_ID)
+        _local_model = CLIPModel.from_pretrained(MODEL_ID).eval()
+    return _local_processor, _local_model
 
 def embed_text(text: str) -> List[float]:
-    if model:
-        # Local inference
+    backend = os.environ.get("EMBEDDING_BACKEND", "modal").lower()
+    if backend == "local":
+        processor, model = _load_local_embedder()
+        import torch
+
         inputs = processor(text=[text], return_tensors="pt", padding=True, truncation=True)
         with torch.no_grad():
             text_features = model.get_text_features(**inputs)
-            # normalize
             text_features = text_features / text_features.norm(p=2, dim=-1, keepdim=True)
         return text_features[0].tolist()
-    else:
-        # Remote inference via Modal
+    if backend == "modal":
         try:
             from modal_infra.embedder import embed_text as remote_embed
-            print(f"Invoking Modal for text embedding: '{text[:20]}...'")
-            # remote_embed.remote() calls the function on Modal
-            result = remote_embed.remote(text)
-            # The result from modal might come back as list or numpy array depending on definition
-            # Our definition returns a list
-            return result
-        except ImportError:
-             print("Error: Could not import 'embedder'. Ensure modal_infra is accessible.")
-             raise HTTPException(status_code=500, detail="Search unavailable: Backend misconfigured (missing embedder).")
+            return remote_embed.remote(text)
+        except ImportError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="Search unavailable: Modal embedder is not installed.",
+            ) from exc
         except Exception as e:
-            print(f"Error invoking Modal embedder: {e}")
-            raise HTTPException(status_code=500, detail=f"Search failed: Remote embedding error ({str(e)})")
+            raise HTTPException(
+                status_code=503,
+                detail="Search unavailable: remote embedding failed.",
+            ) from e
+    raise RuntimeError("EMBEDDING_BACKEND must be 'modal' or 'local'")
 
 app = FastAPI(
     title="ShotSpot API",
     description="Just-in-Time Dataset Factory API",
     docs_url="/docs",
     openapi_url="/openapi.json",
-    servers=[{"url": "/api"}],
-    root_path="/api"
+    root_path=os.environ.get("ROOT_PATH", ""),
 )
 
-# Allow CORS
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    ).split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -105,9 +112,9 @@ class ScrapeRequest(BaseModel):
     output_format: str = "json"
 
 class CreateDatasetRequest(BaseModel):
-    prompt: str
+    prompt: str = Field(min_length=1, max_length=500)
     urls: List[str]
-    scale: int = 10
+    scale: int = Field(default=10, ge=1, le=100)
 
 class FrameUpload(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -121,8 +128,8 @@ class FrameUploadBulk(BaseModel):
     frames: List[FrameUpload]
 
 class SearchRequest(BaseModel):
-    query: str
-    top_k: int = 24
+    query: str = Field(min_length=1, max_length=500)
+    top_k: int = Field(default=24, ge=1, le=100)
     source_url: Optional[str] = None
     allowed_sources: Optional[List[str]] = None
 
@@ -150,6 +157,12 @@ class IngestionInitRequest(BaseModel):
 
 # --- Video Discovery ---
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
+
+
+def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
+    expected = os.environ.get("API_KEY")
+    if expected and (x_api_key is None or not hmac.compare_digest(x_api_key, expected)):
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 
 def is_valid_video_url(url: str) -> bool:
@@ -305,13 +318,11 @@ async def create_dataset_endpoint(request: CreateDatasetRequest):
             if not url: 
                 continue
             
-            # Constraints: Only run ingestion (CLIP/Modal) on Twitch links
-            # YouTube or other links are returned as "discovered" but not processed
-            if "twitch.tv" not in url:
+            if not is_valid_video_url(url):
                 results.append({
                     "url": url,
-                    "status": "discovered_only", 
-                    "message": "Ingestion skipped (Non-Twitch link)",
+                    "status": "rejected",
+                    "message": "Unsupported or non-video URL",
                     "job_id": None
                 })
                 continue
@@ -409,7 +420,21 @@ def export_dataset(query: Optional[str] = None):
 @app.get("/")
 @app.get("/api")
 def root():
-    return {"status": "ok", "message": "Ingest.ai API Operational"}
+    return {"status": "ok", "service": "shotspot-api"}
+
+
+@app.get("/health")
+def health():
+    """Readiness check including the configured MongoDB connection."""
+    try:
+        client = get_client(server_selection_timeout_ms=2000)
+        try:
+            client.admin.command("ping")
+        finally:
+            client.close()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Database unavailable") from exc
+    return {"status": "ok", "database": "connected"}
 
 @app.get("/stats")
 def stats():
@@ -451,7 +476,7 @@ def stats():
         "total_frames": total_count, 
     }
 
-@app.post("/frames/bulk")
+@app.post("/frames/bulk", dependencies=[Depends(require_api_key)])
 def upload_frames_bulk(body: FrameUploadBulk):
     ids = []
     print(f"Received {len(body.frames)} frames")
@@ -573,12 +598,24 @@ def search_frames(req: SearchRequest):
         if "twitch.tv" in source:
              link = f"{source}?t={int(ts)}s"
         elif "youtube.com" in source or "youtu.be" in source:
-             link = f"{source}&t={int(ts)}s"
+             separator = "&" if "?" in source else "?"
+             link = f"{source}{separator}t={int(ts)}s"
              
-        # Use a placeholder or frame extraction service for the actual image
+        thumbnail_url = None
+        youtube_match = None
+        if "youtube.com" in source or "youtu.be" in source:
+            import re
+
+            youtube_match = re.search(
+                r"(?:youtube\.com/watch\?v=|youtu\.be/)([A-Za-z0-9_-]+)",
+                source,
+            )
+        if youtube_match:
+            thumbnail_url = f"https://img.youtube.com/vi/{youtube_match.group(1)}/hqdefault.jpg"
+
         formatted.append({
             "id": str(doc.get("_id")),
-            "url": f"https://source.unsplash.com/random/300x200?sig={random.randint(0,1000)}",
+            "url": thumbnail_url,
             "timestamp": time_str,
             "timestamp_seconds": int(ts),
             "score": doc.get("score", 0),
@@ -639,17 +676,14 @@ async def start_ingest(source_url: str, prompt: str, scale: int = 10, stealth: b
             "message": "❌ Please run `modal deploy modal/ingestor.py` in your terminal to deploy the function first."
         }
     except Exception as e:
-        env_vars = list(os.environ.keys())
-        token_id_ok = "MODAL_TOKEN_ID" in os.environ
-        token_secret_ok = "MODAL_TOKEN_SECRET" in os.environ
         print(f"Modal invocation failed: {e}")
         return {
             "ok": False,
             "error": str(e),
-            "message": f"Failed to trigger Modal function: {str(e)} \nDEBUG INFO: MODAL_TOKEN_ID set? {token_id_ok}, MODAL_TOKEN_SECRET set? {token_secret_ok}"
+            "message": "Failed to trigger the Modal ingestion function."
         }
 
-@app.post("/ingestion/init")
+@app.post("/ingestion/init", dependencies=[Depends(require_api_key)])
 def init_ingestion(req: IngestionInitRequest):
     print(f"🏁 Ingestion Init: {req.total_segments} segments for {req.url}")
     ingestion_jobs[req.url] = {

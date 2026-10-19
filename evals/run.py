@@ -70,11 +70,28 @@ def evaluate_mode(
     mode: str,
     top_k: int,
     restrict_to_dataset: bool,
+    warmup: bool,
 ) -> dict[str, Any]:
     scores: list[dict[str, Any]] = []
     latencies: list[float] = []
     failures: list[dict[str, str]] = []
     allowed_sources = sorted({case.source_url for case in cases})
+
+    if warmup:
+        payload: dict[str, Any] = {
+            "query": cases[0].query,
+            "top_k": top_k,
+            "mode": mode,
+            "min_score": -1.0,
+        }
+        if restrict_to_dataset:
+            payload["allowed_sources"] = allowed_sources
+        response = client.post("/search", json=payload)
+        response.raise_for_status()
+        body = response.json()
+        if not body.get("ok"):
+            raise RuntimeError(body.get("error", "warmup search returned ok=false"))
+        print(f"{mode:<10} warmup complete (excluded from metrics)")
 
     for case in cases:
         payload: dict[str, Any] = {
@@ -152,6 +169,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--restrict-to-dataset", action="store_true")
+    parser.add_argument(
+        "--warmup",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Warm each retrieval mode before measuring latency (default: enabled)",
+    )
     parser.add_argument("--fail-under-recall-5", type=float)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--markdown", type=Path)
@@ -175,6 +198,7 @@ def main() -> int:
             "base_url": args.base_url,
             "top_k": args.top_k,
             "restrict_to_dataset": args.restrict_to_dataset,
+            "warmup": args.warmup,
             "modes": modes,
         },
         "dataset_cases": [asdict(case) for case in cases],
@@ -183,7 +207,7 @@ def main() -> int:
     with httpx.Client(base_url=args.base_url.rstrip("/"), timeout=args.timeout) as client:
         for mode in modes:
             report["modes"][mode] = evaluate_mode(
-                client, cases, mode, args.top_k, args.restrict_to_dataset
+                client, cases, mode, args.top_k, args.restrict_to_dataset, args.warmup
             )
 
     output_text = json.dumps(report, indent=2)

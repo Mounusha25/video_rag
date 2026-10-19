@@ -70,6 +70,9 @@ python -m evals.run \
 `--restrict-to-dataset` searches only the sources named by the benchmark. Omit
 it to measure retrieval against the entire database. Add
 `--fail-under-recall-5 0.70` only after establishing and reviewing a baseline.
+The runner warms each retrieval mode once before recording latency so one-time
+model initialization is not counted. Use `--no-warmup` when cold-start latency
+is the quantity you intentionally want to measure.
 
 Generated reports are ignored by Git because live metrics depend on the indexed
 corpus and deployed model. Commit a specific report only when it is accompanied

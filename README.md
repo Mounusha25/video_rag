@@ -22,8 +22,11 @@ verified boundaries are explicit:
 - OCR exists as an experimental standalone Modal service; it is **not yet part
   of the production ingestion fusion path**.
 - A versioned evaluation harness measures Recall@K, MRR, query-type slices,
-  error counts, and p50/p95 latency against a labeled JSONL dataset. No quality
-  claim is made until real videos are labeled and a report is generated.
+  error counts, and p50/p95 latency against a labeled JSONL dataset.
+- The first source-grounded benchmark contains 30 labeled cases across three
+  real videos. Fused retrieval achieved 0.717 Recall@5 and 0.632 MRR with zero
+  request errors; see [the benchmark report](docs/BENCHMARK_RESULTS.md) for the
+  exact scope, ablations, and limitations.
 
 ## Architecture
 
@@ -145,6 +148,9 @@ started manually.
 
 For retrieval evaluation, label real video moments and run the fused/visual/
 transcript comparison documented in [docs/EVALUATION.md](docs/EVALUATION.md).
+The committed [benchmark dataset](evals/data/benchmark.jsonl) and
+[baseline report](docs/BENCHMARK_RESULTS.md) make the current result
+reproducible without presenting it as universal model accuracy.
 
 ## Deployment
 
@@ -161,10 +167,10 @@ workflow or `fly deploy`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Roadmap
 
-1. Label and version at least 30 real query-to-timestamp benchmark cases.
-2. Establish reviewed fused, visual, and transcript retrieval baselines.
-3. Integrate OCR into the primary ingestion path and measure its incremental gain.
-4. Persist ingestion jobs instead of tracking them in process memory.
+1. Expand the benchmark beyond three videos and add a held-out source split.
+2. Integrate OCR into the primary ingestion path and measure its incremental gain.
+3. Persist ingestion jobs instead of tracking them in process memory.
+4. Tune modality weights against development cases, then evaluate once on held-out cases.
 
 ## Security note
 

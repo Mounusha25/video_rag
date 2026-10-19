@@ -24,6 +24,18 @@ This project is **vector-based**: search uses only Atlas Vector Search. Create t
       "similarity": "cosine"
     },
     {
+      "type": "vector",
+      "path": "visual_embedding",
+      "numDimensions": 512,
+      "similarity": "cosine"
+    },
+    {
+      "type": "vector",
+      "path": "transcript_embedding",
+      "numDimensions": 512,
+      "similarity": "cosine"
+    },
+    {
       "type": "filter",
       "path": "source"
     }
@@ -33,7 +45,10 @@ This project is **vector-based**: search uses only Atlas Vector Search. Create t
 
 **Important:** 
 1. `numDimensions` MUST be **512** for CLIP ViT-B/32.
-2. The `source` filter field is REQUIRED to prevent searching across multiple videos.
+2. The `source` filter field is required for dataset-scoped evaluation.
+3. Existing documents created before multimodal evaluation contain only
+   `embedding`. Re-ingest benchmark videos to populate `visual_embedding` and
+   `transcript_embedding` before comparing modes.
 
 # Troubleshooting
 - **Seeing old video clips?** You likely forgot to add the `source` filter block to your Atlas Search Index definition. Without it, the `filter` in the query is silently ignored.

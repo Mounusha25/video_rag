@@ -2,7 +2,7 @@
 import os
 import sys
 import hmac
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 import time
 
 # Load env vars from the root .env file
@@ -120,6 +120,8 @@ class FrameUpload(BaseModel):
     model_config = ConfigDict(extra="allow")
     embedding: Optional[List[float]] = None
     vector: Optional[List[float]] = None
+    visual_embedding: Optional[List[float]] = None
+    transcript_embedding: Optional[List[float]] = None
     source: Optional[str] = None
     timestamp: Optional[float] = None
     title: Optional[str] = None
@@ -132,6 +134,15 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=24, ge=1, le=100)
     source_url: Optional[str] = None
     allowed_sources: Optional[List[str]] = None
+    mode: Literal["fused", "visual", "transcript"] = "fused"
+    min_score: float = Field(default=0.18, ge=-1.0, le=1.0)
+
+
+SEARCH_VECTOR_PATHS = {
+    "fused": "embedding",
+    "visual": "visual_embedding",
+    "transcript": "transcript_embedding",
+}
 
 # --- Stats Tracking ---
 # Simple in-memory stats for the demo
@@ -560,7 +571,12 @@ def search_frames(req: SearchRequest):
             # Standard MQL match uses $in
             filter_q["source"] = {"$in": req.allowed_sources}
 
-        results = search(vector, top_k=req.top_k, filter_query=filter_q)
+        results = search(
+            vector,
+            top_k=req.top_k,
+            filter_query=filter_q,
+            vector_path=SEARCH_VECTOR_PATHS[req.mode],
+        )
     except Exception as e:
         error_msg = str(e)
         # Handle missing index configuration gracefully
@@ -570,7 +586,12 @@ def search_frames(req: SearchRequest):
             print("   ACTION REQUIRED: Add {'type': 'filter', 'path': 'source'} to your Atlas Search Index.")
             
             # Fallback: Retry without the filter
-            results = search(vector, top_k=req.top_k, filter_query=None)
+            results = search(
+                vector,
+                top_k=req.top_k,
+                filter_query=None,
+                vector_path=SEARCH_VECTOR_PATHS[req.mode],
+            )
         else:
             print(f"DB Search failed: {e}")
             return {"ok": False, "error": str(e)}
@@ -581,7 +602,7 @@ def search_frames(req: SearchRequest):
         # Filter out low relevance scores (Noise reduction)
         # Cosine similarity for CLIP usually effectively ranges 0.2-0.3 for good matches
         score = doc.get("score", 0)
-        if score < 0.18: 
+        if score < req.min_score:
             continue
             
         # doc has: embedding, time, title, source, score (from search)
@@ -623,7 +644,7 @@ def search_frames(req: SearchRequest):
             "title": doc.get("title", "Unknown")
         })
 
-    return {"ok": True, "results": formatted}
+    return {"ok": True, "mode": req.mode, "results": formatted}
 
 
 class GroupTimestampsRequest(BaseModel):

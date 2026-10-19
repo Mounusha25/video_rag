@@ -1,0 +1,3 @@
+{"id":"replace-visual-01","query":"a red car driving past the camera","source_url":"https://www.youtube.com/watch?v=REPLACE_ME","query_type":"visual","tolerance_seconds":5,"relevant_moments":[{"start_seconds":30,"end_seconds":38}]}
+{"id":"replace-transcript-01","query":"the speaker explains how vector search works","source_url":"https://www.youtube.com/watch?v=REPLACE_ME","query_type":"transcript","tolerance_seconds":5,"relevant_moments":[{"start_seconds":75,"end_seconds":92}]}
+{"id":"replace-mixed-01","query":"the presenter says deployment while showing a terminal","source_url":"https://www.youtube.com/watch?v=REPLACE_ME","query_type":"mixed","tolerance_seconds":5,"relevant_moments":[{"start_seconds":120,"end_seconds":135}]}

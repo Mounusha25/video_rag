@@ -287,9 +287,16 @@ class VideoWorker:
             results.append({
                 "time": t, 
                 "vector": vec.tolist(), 
+                "visual_embedding": img_emb[i].tolist(),
+                "transcript_embedding": (
+                    text_embedding.tolist() if text_embedding is not None else None
+                ),
                 "title": title, 
                 "source": video_url,
-                "text_context": transcription_text
+                "text_context": transcription_text,
+                "embedding_model": MODEL_REPO,
+                "transcription_model": "openai/whisper-tiny",
+                "fusion_strategy": "normalized_sum",
             })
 
         # Upload

@@ -68,3 +68,22 @@ def test_bulk_write_requires_key_when_configured(monkeypatch):
 def test_search_request_bounds_are_validated():
     response = client.post("/search", json={"query": "demo", "top_k": 1000})
     assert response.status_code == 422
+
+
+def test_search_mode_selects_corresponding_vector_field(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(api, "embed_text", lambda _query: [1.0, 0.0])
+
+    def fake_search(*_args, **kwargs):
+        captured.update(kwargs)
+        return []
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search",
+        json={"query": "spoken explanation", "mode": "transcript", "min_score": -1},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["mode"] == "transcript"
+    assert captured["vector_path"] == "transcript_embedding"

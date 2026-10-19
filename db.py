@@ -123,6 +123,7 @@ def search(
     collection: Union[Collection, None] = None,
     collection_name: str = "frames",
     index_name: str = "frame_vectors",
+    vector_path: str = "embedding",
     top_k: int = 10,
     num_candidates: Union[int, None] = None,
     filter_query: Union[dict, None] = None,
@@ -138,6 +139,7 @@ def search(
         collection: Collection. If None, uses default.
         collection_name: Collection name when collection is None.
         index_name: Atlas Vector Search index name (default "frame_vectors").
+        vector_path: Document field containing the vectors to search.
         top_k: Max results to return.
         num_candidates: ANN candidates (default 20 * top_k).
         filter_query: Optional MQL filter.
@@ -155,7 +157,7 @@ def search(
 
     stage: dict = {
         "index": index_name,
-        "path": "embedding",
+        "path": vector_path,
         "queryVector": query_vec,
         "limit": limit,
         "numCandidates": num_candidates,
@@ -173,7 +175,7 @@ def search(
 
 
 def create_vector_index(
-    num_dimensions: int = 5,
+    num_dimensions: int = 512,
     index_name: str = "frame_vectors",
     collection_name: str = "frames",
     db: Union[Database, None] = None,
@@ -184,7 +186,7 @@ def create_vector_index(
     Uses createSearchIndexes. Index may take a minute to become ready.
 
     Args:
-        num_dimensions: Embedding size (default 5 for test_db.py; use 384, 768, etc. for real encoders).
+        num_dimensions: Embedding size (512 for the configured CLIP ViT-B/32 model).
         index_name: Index name (default "frame_vectors").
         collection_name: Collection to index (default "frames").
         db: Database. If None, uses default from env.
@@ -205,11 +207,17 @@ def create_vector_index(
                     "fields": [
                         {
                             "type": "vector",
-                            "path": "embedding",
+                            "path": path,
                             "numDimensions": num_dimensions,
                             "similarity": "cosine",
                         }
+                        for path in (
+                            "embedding",
+                            "visual_embedding",
+                            "transcript_embedding",
+                        )
                     ]
+                    + [{"type": "filter", "path": "source"}]
                 },
             }
         ],

@@ -21,8 +21,9 @@ verified boundaries are explicit:
 - MongoDB Atlas `$vectorSearch` performs approximate nearest-neighbor retrieval.
 - OCR exists as an experimental standalone Modal service; it is **not yet part
   of the production ingestion fusion path**.
-- A labeled retrieval benchmark is the next milestone. No Recall@K, MRR, or
-  time-savings claims are made before that benchmark exists.
+- A versioned evaluation harness measures Recall@K, MRR, query-type slices,
+  error counts, and p50/p95 latency against a labeled JSONL dataset. No quality
+  claim is made until real videos are labeled and a report is generated.
 
 ## Architecture
 
@@ -58,6 +59,7 @@ modal_infra/ingestor.py  GPU frame + transcript ingestion pipeline
 modal_infra/embedder.py  GPU text-query embedding endpoint
 modal_infra/ocr.py       Experimental OCR service (not fused yet)
 db.py                    MongoDB inserts and Atlas vector search
+evals/                   Labeled retrieval benchmark and metric runner
 tests/                   deterministic API and timestamp unit tests
 docs/                    deployment and Atlas setup guides
 ```
@@ -72,7 +74,7 @@ docs/                    deployment and Atlas setup guides
 | `POST` | `/dataset/create` | Discover or submit sources and start ingestion |
 | `POST` | `/ingest/start` | Start one Modal ingestion job |
 | `GET` | `/ingestion/status` | Read in-memory progress for a source URL |
-| `POST` | `/search` | Embed text and retrieve timestamped moments |
+| `POST` | `/search` | Retrieve fused, visual-only, or transcript-only moments |
 | `POST` | `/frames/bulk` | Modal callback for storing frame vectors |
 | `POST` | `/ingestion/init` | Modal callback for initializing progress |
 | `GET` | `/dataset/export` | Export result metadata as a ZIP archive |
@@ -134,8 +136,12 @@ npm run build
 ```
 
 GitHub Actions runs backend tests, a production frontend build, and a Docker
-build on pushes and pull requests. Fly deployment is manual so a missing or
-expired deployment token cannot make every source commit appear broken.
+build on pushes and pull requests. Fly deployment runs for code changes when
+`FLY_API_TOKEN` is configured and skips cleanly otherwise; it can also be
+started manually.
+
+For retrieval evaluation, label real video moments and run the fused/visual/
+transcript comparison documented in [docs/EVALUATION.md](docs/EVALUATION.md).
 
 ## Deployment
 
@@ -152,11 +158,10 @@ workflow or `fly deploy`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## Roadmap
 
-1. Add a versioned labeled query-to-timestamp benchmark.
-2. Report Recall@1, Recall@5, MRR, timestamp tolerance, and p50/p95 latency.
-3. Compare visual-only, transcript-only, and fused retrieval.
-4. Integrate OCR into the primary ingestion path and measure its incremental gain.
-5. Persist ingestion jobs instead of tracking them in process memory.
+1. Label and version at least 30 real query-to-timestamp benchmark cases.
+2. Establish reviewed fused, visual, and transcript retrieval baselines.
+3. Integrate OCR into the primary ingestion path and measure its incremental gain.
+4. Persist ingestion jobs instead of tracking them in process memory.
 
 ## Security note
 

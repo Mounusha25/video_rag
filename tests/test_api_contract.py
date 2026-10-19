@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 import app.backend.api as api
+import db
 
 
 client = TestClient(api.app)
@@ -118,3 +119,93 @@ def test_ocr_search_uses_ocr_vector_and_returns_detected_text(monkeypatch):
     assert captured["vector_path"] == "ocr_embedding"
     assert result["ocr_text"] == "67% of buyers"
     assert result["transcript"] == "Most buyers prefer self service"
+
+
+def test_ingestion_status_reads_durable_job(monkeypatch):
+    monkeypatch.setattr(
+        api,
+        "get_job",
+        lambda _url: {
+            "status": "processing",
+            "total_segments": 4,
+            "processed_segments": 2,
+            "processed_frames": 7,
+            "failed_segments": 0,
+            "remote_job_id": "modal-123",
+            "error": None,
+        },
+    )
+
+    response = client.get(
+        "/ingestion/status",
+        params={"url": "https://www.youtube.com/watch?v=abc123"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["progress"] == 0.5
+    assert response.json()["frames"] == 7
+    assert response.json()["job_id"] == "modal-123"
+
+
+def test_ingestion_init_persists_processing_state(monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    captured = {}
+
+    def fake_initialize(url, total_segments):
+        captured.update(url=url, total_segments=total_segments)
+        return {
+            "status": "processing",
+            "total_segments": total_segments,
+            "processed_segments": 0,
+            "processed_frames": 0,
+            "failed_segments": 0,
+            "remote_job_id": None,
+            "error": None,
+        }
+
+    monkeypatch.setattr(api, "initialize_job", fake_initialize)
+    response = client.post(
+        "/ingestion/init",
+        json={"url": "https://youtu.be/demo", "total_segments": 3},
+    )
+
+    assert response.status_code == 200
+    assert captured == {"url": "https://youtu.be/demo", "total_segments": 3}
+    assert response.json()["status"] == "processing"
+
+
+def test_bulk_write_records_idempotent_segment_after_insert(monkeypatch):
+    monkeypatch.delenv("API_KEY", raising=False)
+    monkeypatch.setattr(db, "insert_frames", lambda documents: ["frame-1"] * len(documents))
+    captured = {}
+
+    def fake_record(source_url, frame_count, *, segment_id=None):
+        captured.update(
+            source_url=source_url,
+            frame_count=frame_count,
+            segment_id=segment_id,
+        )
+        return {"processed_segments": 1, "total_segments": 2}
+
+    monkeypatch.setattr(api, "record_segment", fake_record)
+    response = client.post(
+        "/frames/bulk",
+        json={
+            "segment_id": "0.000:16.000",
+            "frames": [
+                {
+                    "embedding": [1.0, 0.0],
+                    "source": "https://youtu.be/demo",
+                    "timestamp": 0,
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 1
+    assert captured == {
+        "source_url": "https://youtu.be/demo",
+        "frame_count": 1,
+        "segment_id": "0.000:16.000",
+    }

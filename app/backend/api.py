@@ -26,6 +26,15 @@ import json
 
 # --- MongoDB Integration ---
 from db import get_client, get_collection, search
+from ingestion_jobs import (
+    attach_remote_job,
+    fail_job,
+    get_job,
+    initialize_job,
+    public_job_status,
+    queue_job,
+    record_segment,
+)
 
 try:
     from time_stamp_grouping import get_timestamps as get_timestamp_segments
@@ -130,6 +139,7 @@ class FrameUpload(BaseModel):
 
 class FrameUploadBulk(BaseModel):
     frames: List[FrameUpload]
+    segment_id: Optional[str] = None
 
 class SearchRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
@@ -161,13 +171,9 @@ class GlobalStats:
 stats_tracker = GlobalStats()
 
 
-# --- Ingestion Job Tracking ---
-# Simple in-memory: { "url": { "total": int, "processed": int, "status": "processing" } }
-ingestion_jobs = {}
-
 class IngestionInitRequest(BaseModel):
     url: str
-    total_segments: int
+    total_segments: int = Field(ge=1)
 
 # --- Video Discovery ---
 YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")
@@ -177,6 +183,13 @@ def require_api_key(x_api_key: Optional[str] = Header(default=None)) -> None:
     expected = os.environ.get("API_KEY")
     if expected and (x_api_key is None or not hmac.compare_digest(x_api_key, expected)):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
+
+
+def _best_effort_fail_job(source_url: str, error: str) -> None:
+    try:
+        fail_job(source_url, error)
+    except Exception as progress_error:
+        print(f"Failed to persist ingestion failure: {progress_error}")
 
 
 def is_valid_video_url(url: str) -> bool:
@@ -342,9 +355,11 @@ async def create_dataset_endpoint(request: CreateDatasetRequest):
                 continue
                 
             try:
+                queue_job(url, prompt=request.prompt, worker_target=request.scale)
                 # Spawn async - this runs the "Analyze Data" pipeline on this URL
                 # (Download -> Split -> Frame -> Embed -> Vector DB)
                 call = await f.spawn.aio(url)
+                attach_remote_job(url, call.object_id)
                 
                 results.append({
                     "url": url,
@@ -352,6 +367,7 @@ async def create_dataset_endpoint(request: CreateDatasetRequest):
                     "job_id": call.object_id
                 })
             except Exception as e:
+                _best_effort_fail_job(url, str(e))
                 results.append({
                     "url": url,
                     "status": "error",
@@ -502,18 +518,6 @@ def upload_frames_bulk(body: FrameUploadBulk):
     stats_tracker.total_bytes_processed += len(body.frames) * 3000 
     stats_tracker.last_frame_arrival_time = time.time()
     
-    # Update Per-Job Stats
-    if body.frames:
-        src = body.frames[0].source
-        if src and src in ingestion_jobs:
-            job = ingestion_jobs[src]
-            job["processed_segments"] += 1
-            job["processed_frames"] += len(body.frames)
-            job["last_update"] = time.time()
-            if job["processed_segments"] >= job["total_segments"]:
-                job["status"] = "completed"
-            print(f"📊 Job Update [{src}]: {job['processed_segments']}/{job['total_segments']} segments")
-
     # Need to import insert_frames from db (bulk version)
     try:
         from db import insert_frames
@@ -538,6 +542,29 @@ def upload_frames_bulk(body: FrameUploadBulk):
         ids = [str(x) for x in inserted_ids]
     except Exception as e:
         print(f"Bulk insert failed: {e}")
+        raise HTTPException(status_code=503, detail="Failed to persist frames") from e
+
+    if ids and body.frames:
+        source_url = body.frames[0].source
+        if source_url:
+            try:
+                job = record_segment(
+                    source_url,
+                    len(ids),
+                    segment_id=body.segment_id,
+                )
+                if job:
+                    print(
+                        f"📊 Job Update [{source_url}]: "
+                        f"{job.get('processed_segments', 0)}/"
+                        f"{job.get('total_segments', 0)} segments"
+                    )
+            except Exception as exc:
+                print(f"Progress update failed after frame insert: {exc}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="Frames persisted, but ingestion progress update failed",
+                ) from exc
             
     return {"ok": True, "count": len(ids), "ids": ids}
 
@@ -682,6 +709,7 @@ async def start_ingest(source_url: str, prompt: str, scale: int = 10, stealth: b
     stats_tracker.last_frame_arrival_time = time.time() # Reset activity timer
 
     try:
+        queue_job(source_url, prompt=prompt, worker_target=scale)
         # 1. Lookup the DEPLOYED function. 
         # This requires you to run `modal deploy modal/ingestor.py` in your terminal first.
         # The first argument is the App Name (from ingestor.py), the second is the function name.
@@ -689,6 +717,7 @@ async def start_ingest(source_url: str, prompt: str, scale: int = 10, stealth: b
         
         # 2. Spawn the function execution asynchronously on the cloud
         call = await f.spawn.aio(source_url)
+        attach_remote_job(source_url, call.object_id)
         
         return {
             "ok": True, 
@@ -696,6 +725,7 @@ async def start_ingest(source_url: str, prompt: str, scale: int = 10, stealth: b
             "message": f"Started ingestion for '{prompt}' from {source_url} (ID: {call.object_id})"
         }
     except modal.exception.NotFoundError:
+        _best_effort_fail_job(source_url, "Modal App Not Found")
         return {
             "ok": False,
             "error": "Modal App Not Found",
@@ -703,6 +733,7 @@ async def start_ingest(source_url: str, prompt: str, scale: int = 10, stealth: b
         }
     except Exception as e:
         print(f"Modal invocation failed: {e}")
+        _best_effort_fail_job(source_url, str(e))
         return {
             "ok": False,
             "error": str(e),
@@ -712,43 +743,18 @@ async def start_ingest(source_url: str, prompt: str, scale: int = 10, stealth: b
 @app.post("/ingestion/init", dependencies=[Depends(require_api_key)])
 def init_ingestion(req: IngestionInitRequest):
     print(f"🏁 Ingestion Init: {req.total_segments} segments for {req.url}")
-    ingestion_jobs[req.url] = {
-        "total_segments": req.total_segments,
-        "processed_segments": 0,
-        "processed_frames": 0,
-        "start_time": time.time(),
-        "last_update": time.time(),
-        "status": "processing"
-    }
-    return {"ok": True}
+    try:
+        job = initialize_job(req.url, req.total_segments)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Failed to initialize ingestion job") from exc
+    return {"ok": True, **public_job_status(job)}
 
 @app.get("/ingestion/status")
 def get_ingestion_status(url: str):
-    # Try exact match or match ignoring http/https/www variations?
-    # For now, simplistic
-    job = ingestion_jobs.get(url)
-    if not job:
-        # Check if we have any job that contains this URL substring (e.g. yt-dlp canonicalization)
-        for job_url, j in ingestion_jobs.items():
-            if url in job_url or job_url in url:
-                job = j
-                break
-    
-    if not job:
-        return {"status": "not_found", "progress": 0}
-    
-    total = job["total_segments"]
-    current = job["processed_segments"]
-    # Cap progress at 99% until fully complete? Or just 1.0
-    progress = min(1.0, current / total) if total > 0 else 0
-    
-    return {
-        "status": job["status"],
-        "progress": progress,
-        "total_segments": total,
-        "processed_segments": current,
-        "frames": job["processed_frames"]
-    }
+    try:
+        return public_job_status(get_job(url))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Failed to read ingestion status") from exc
 
 if __name__ == "__main__":
     import uvicorn

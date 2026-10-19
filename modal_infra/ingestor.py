@@ -46,6 +46,7 @@ image = (
         "certifi",
     )
     .run_function(download_model_build_step)
+    .add_local_python_source("db", "ingestion_jobs")
 )
 
 model_cache = modal.Volume.from_name("treehacks-video-ingestor-cache", create_if_missing=True)
@@ -303,6 +304,7 @@ class VideoWorker:
             
             results.append({
                 "time": t, 
+                "segment_id": f"{start:.3f}:{end:.3f}",
                 "vector": vec.tolist(), 
                 "visual_embedding": img_emb[i].tolist(),
                 "transcript_embedding": (
@@ -322,20 +324,28 @@ class VideoWorker:
             })
 
         # Upload
-        self._push_results(results)
-        return len(results)
+        return len(results) if self._push_results(results) else 0
 
     def _push_results(self, vectors):
         import certifi
         from pymongo import MongoClient
+        from ingestion_jobs import record_segment
 
         uri = os.environ.get("MONGODB_URI")
         db_name = os.environ.get("MONGODB_DB", "videorag")
         if not uri:
             print("❌ MONGODB_URI not set — dropping results")
-            return
+            return False
 
+        docs = []
+        for vector in vectors:
+            doc = dict(vector)
+            doc["embedding"] = doc.pop("vector")
+            docs.append(doc)
+
+        inserted = False
         for attempt in range(3):
+            client = None
             try:
                 client = MongoClient(
                     uri,
@@ -345,19 +355,46 @@ class VideoWorker:
                     tlsCAFile=certifi.where(),
                 )
                 col = client[db_name]["frames"]
-                # Convert list-of-dicts; rename 'vector' -> 'embedding' for Atlas Vector Search
-                docs = []
-                for v in vectors:
-                    doc = dict(v)
-                    doc["embedding"] = doc.pop("vector")
-                    docs.append(doc)
                 col.insert_many(docs)
-                client.close()
                 print(f"✅ Saved {len(docs)} frames to MongoDB")
-                return
+                inserted = True
+                break
             except Exception as e:
                 print(f"⚠️ MongoDB write attempt {attempt+1} failed: {e}")
-        print("❌ All MongoDB write attempts failed")
+            finally:
+                if client is not None:
+                    client.close()
+        if not inserted:
+            print("❌ All MongoDB write attempts failed")
+            return False
+
+        source_url = docs[0]["source"]
+        segment_id = docs[0]["segment_id"]
+        for attempt in range(3):
+            client = None
+            try:
+                client = MongoClient(
+                    uri,
+                    serverSelectionTimeoutMS=15000,
+                    connectTimeoutMS=15000,
+                    tls=True,
+                    tlsCAFile=certifi.where(),
+                )
+                record_segment(
+                    source_url,
+                    len(docs),
+                    segment_id=segment_id,
+                    collection=client[db_name]["ingestion_jobs"],
+                )
+                print(f"📊 Recorded durable progress for segment {segment_id}")
+                return True
+            except Exception as e:
+                print(f"⚠️ Progress update attempt {attempt+1} failed: {e}")
+            finally:
+                if client is not None:
+                    client.close()
+        print("❌ Frames were saved, but durable progress could not be updated")
+        return False
 
 # 3. Orchestrator
 @app.function(
@@ -365,10 +402,32 @@ class VideoWorker:
     secrets=[modal.Secret.from_name("mongo")],
 )
 def ingest_video_orchestrator(url: str):
+    import certifi
     import yt_dlp
-    import math
-    import requests
-    import os
+    from pymongo import MongoClient
+    from ingestion_jobs import fail_job, finish_job, initialize_job
+
+    mongo_uri = os.environ.get("MONGODB_URI")
+    db_name = os.environ.get("MONGODB_DB", "videorag")
+
+    def update_job(operation, *args, **kwargs):
+        if not mongo_uri:
+            raise RuntimeError("MONGODB_URI is not configured")
+        client = MongoClient(
+            mongo_uri,
+            serverSelectionTimeoutMS=15000,
+            connectTimeoutMS=15000,
+            tls=True,
+            tlsCAFile=certifi.where(),
+        )
+        try:
+            return operation(
+                *args,
+                collection=client[db_name]["ingestion_jobs"],
+                **kwargs,
+            )
+        finally:
+            client.close()
 
     print(f"🔎 Analyzing {url}...")
     try:
@@ -381,7 +440,11 @@ def ingest_video_orchestrator(url: str):
                 duration = 60
     except Exception as e:
         print(f"❌ Metadata failed: {e}")
-        return
+        try:
+            update_job(fail_job, url, f"Metadata extraction failed: {e}")
+        except Exception as job_error:
+            print(f"⚠️ Failed to persist metadata error: {job_error}")
+        return {"status": "failed", "error": str(e)}
 
     print(f"🎞️ Title: {title} | Duration: {duration}s")
 
@@ -393,27 +456,31 @@ def ingest_video_orchestrator(url: str):
         segments.append((url, float(t), end, title))
 
     print(f"🚀 Launching {len(segments)} parallel workers...")
-    
-    # Notify backend of job start
+
     try:
-        api_url = os.environ.get("VECTOR_API_URL")
-        # Strip trailing / if present
-        if api_url:
-            print(f"📣 Notifying backend: {len(segments)} segments to {api_url}")
-            requests.post(
-                api_url.rstrip("/") + "/ingestion/init",
-                json={"url": url, "total_segments": len(segments)},
-                headers={"X-API-Key": os.environ.get("VECTOR_API_KEY", "")},
-                timeout=10
-            )
+        update_job(initialize_job, url, len(segments))
     except Exception as e:
-        print(f"⚠️ Failed to init job stats: {e}")
+        print(f"❌ Failed to initialize durable job state: {e}")
+        return {"status": "failed", "error": str(e)}
 
     # Run in parallel
     worker = VideoWorker()
-    list(worker.process_segment_pipeline.starmap(segments))
-    
-    print("✅ Ingestion Complete.")
+    results = list(worker.process_segment_pipeline.starmap(segments))
+    failed_segments = sum(1 for result in results if not result)
+    try:
+        job = update_job(finish_job, url, failed_segments=failed_segments)
+    except Exception as e:
+        print(f"❌ Failed to finalize durable job state: {e}")
+        return {"status": "failed", "error": str(e)}
+
+    status = job.get("status", "completed") if job else "completed"
+    print(f"✅ Ingestion finished with status={status}.")
+    return {
+        "status": status,
+        "segments": len(segments),
+        "failed_segments": failed_segments,
+        "frames": sum(int(result or 0) for result in results),
+    }
 
 @app.local_entrypoint()
 def main(url: str):

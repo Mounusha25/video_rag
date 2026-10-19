@@ -67,6 +67,7 @@ modal_infra/ingestor.py  GPU frame + transcript ingestion pipeline
 modal_infra/embedder.py  GPU text-query embedding endpoint
 modal_infra/ocr.py       Standalone OCR inspection utility
 db.py                    MongoDB inserts and Atlas vector search
+ingestion_jobs.py        Durable, atomic MongoDB ingestion progress
 evals/                   Labeled retrieval benchmark and metric runner
 tests/                   deterministic API and timestamp unit tests
 docs/                    deployment and Atlas setup guides
@@ -81,7 +82,7 @@ docs/                    deployment and Atlas setup guides
 | `POST` | `/scrape` | Validate supported video URLs |
 | `POST` | `/dataset/create` | Discover or submit sources and start ingestion |
 | `POST` | `/ingest/start` | Start one Modal ingestion job |
-| `GET` | `/ingestion/status` | Read in-memory progress for a source URL |
+| `GET` | `/ingestion/status` | Read durable MongoDB progress for a source URL |
 | `POST` | `/search` | Retrieve fused, visual-only, transcript-only, or OCR-only moments |
 | `POST` | `/frames/bulk` | Modal callback for storing frame vectors |
 | `POST` | `/ingestion/init` | Modal callback for initializing progress |
@@ -171,7 +172,7 @@ workflow or `fly deploy`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 ## Roadmap
 
 1. Expand the benchmark beyond three videos and add a held-out source split.
-2. Persist ingestion jobs instead of tracking them in process memory.
+2. Add automatic retry and dead-letter handling for failed ingestion segments.
 3. Tune modality weights against development cases, then evaluate once on held-out cases.
 4. Batch or parallelize source-resolution OCR to reduce ingestion latency.
 

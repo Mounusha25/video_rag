@@ -35,17 +35,25 @@ video URLs to Modal.
 }
 ```
 
-Progress is exposed through `GET /ingestion/status?url=...`. This state is
-currently in memory and will reset when the API restarts.
+Progress is exposed through `GET /ingestion/status?url=...`. Jobs are stored in
+MongoDB's `ingestion_jobs` collection, so queued, processing, completed, and
+failed states survive API restarts. Segment IDs make progress updates
+idempotent.
 
 ## Modal callbacks
 
-`POST /ingestion/init` initializes progress and `POST /frames/bulk` stores
-frame vectors. When `API_KEY` is set, both require:
+`POST /ingestion/init` initializes durable progress and `POST /frames/bulk`
+stores frame vectors and records a completed segment. The primary Modal path
+writes both frames and progress directly to MongoDB. These routes remain for
+external workers; when `API_KEY` is set, both require:
 
 ```text
 X-API-Key: <configured key>
 ```
+
+External workers should send a stable `segment_id` alongside `frames` in the
+`POST /frames/bulk` body. Repeating the same ID will not increment progress
+twice.
 
 ## Health
 

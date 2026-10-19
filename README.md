@@ -50,6 +50,9 @@ The API uses the deployed Modal text embedder by default. Local CPU inference
 is optional so the Fly/Docker image does not need to contain PyTorch and the
 605 MB CLIP checkpoint.
 
+Short benchmark videos can also be ingested locally with
+`scripts/ingest_local.py`, which avoids requiring paid cloud GPU access.
+
 ## Repository layout
 
 ```text

@@ -39,6 +39,19 @@ Update the Atlas `frame_vectors` index using
 [`ATLAS_VECTOR_INDEX.md`](ATLAS_VECTOR_INDEX.md), deploy the Modal ingestor, and
 re-ingest the benchmark videos. Old rows support fused search only.
 
+If Modal GPU deployment is unavailable, ingest short benchmark videos locally
+without enabling billing:
+
+```bash
+pip install -r requirements-local.txt
+python scripts/ingest_local.py --url "YOUTUBE_OR_TWITCH_VIDEO_URL"
+```
+
+The local path uses the same CLIP model, Whisper-tiny model, five-second frame
+interval, vector fields, and fusion strategy as the Modal path. Videos are
+limited to ten minutes by default so CPU/MPS benchmark preparation stays
+manageable.
+
 ## 3. Run the benchmark
 
 Start the API, then run:

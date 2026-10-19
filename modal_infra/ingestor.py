@@ -1,7 +1,6 @@
 import modal
 import os
 import uuid
-from pathlib import Path
 
 # Configuration
 CACHE_DIR = os.getenv("CACHE_DIR", "/data")  # Shared Volume
@@ -46,16 +45,9 @@ image = (
         "certifi",
     )
     .run_function(download_model_build_step)
-    .add_local_file(
-        local_path=str(Path(__file__).parent.parent / "cookies.txt"),
-        remote_path="/cookies.txt",
-    )
 )
 
 model_cache = modal.Volume.from_name("treehacks-video-ingestor-cache", create_if_missing=True)
-
-# Path where cookies.txt is baked into the image
-COOKIES_PATH = "/cookies.txt"
 
 # --- Helper Functions ---
 

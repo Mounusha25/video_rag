@@ -1,5 +1,7 @@
 # ShotSpot — Multimodal Video Search
 
+[![CI](https://github.com/Mounusha25/video_rag/actions/workflows/ci.yml/badge.svg)](https://github.com/Mounusha25/video_rag/actions/workflows/ci.yml)
+
 ![ShotSpot interface](example.png)
 
 ShotSpot indexes moments from YouTube and Twitch videos and retrieves relevant

@@ -5,3 +5,4 @@ transformers==4.47.1
 accelerate>=1.2.0
 pillow>=10.0.0
 yt-dlp>=2025.1.0
+easyocr>=1.7.2

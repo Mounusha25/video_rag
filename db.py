@@ -197,29 +197,55 @@ def create_vector_index(
     """
     if db is None:
         db = get_db(client=client)
+    definition = vector_index_definition(num_dimensions)
     cmd = {
         "createSearchIndexes": collection_name,
         "indexes": [
             {
                 "name": index_name,
                 "type": "vectorSearch",
-                "definition": {
-                    "fields": [
-                        {
-                            "type": "vector",
-                            "path": path,
-                            "numDimensions": num_dimensions,
-                            "similarity": "cosine",
-                        }
-                        for path in (
-                            "embedding",
-                            "visual_embedding",
-                            "transcript_embedding",
-                        )
-                    ]
-                    + [{"type": "filter", "path": "source"}]
-                },
+                "definition": definition,
             }
         ],
     }
     return db.command(cmd)
+
+
+def vector_index_definition(num_dimensions: int = 512) -> dict:
+    """Return the canonical multimodal Atlas Vector Search definition."""
+    return {
+        "fields": [
+            {
+                "type": "vector",
+                "path": path,
+                "numDimensions": num_dimensions,
+                "similarity": "cosine",
+            }
+            for path in (
+                "embedding",
+                "visual_embedding",
+                "transcript_embedding",
+                "ocr_embedding",
+            )
+        ]
+        + [{"type": "filter", "path": "source"}]
+    }
+
+
+def update_vector_index(
+    num_dimensions: int = 512,
+    index_name: str = "frame_vectors",
+    collection_name: str = "frames",
+    db: Union[Database, None] = None,
+    client: Union[MongoClient, None] = None,
+) -> dict:
+    """Update an existing Atlas vector index to the canonical modality schema."""
+    if db is None:
+        db = get_db(client=client)
+    return db.command(
+        {
+            "updateSearchIndex": collection_name,
+            "name": index_name,
+            "definition": vector_index_definition(num_dimensions),
+        }
+    )

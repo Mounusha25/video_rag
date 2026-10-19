@@ -122,6 +122,8 @@ class FrameUpload(BaseModel):
     vector: Optional[List[float]] = None
     visual_embedding: Optional[List[float]] = None
     transcript_embedding: Optional[List[float]] = None
+    ocr_embedding: Optional[List[float]] = None
+    ocr_text: Optional[str] = None
     source: Optional[str] = None
     timestamp: Optional[float] = None
     title: Optional[str] = None
@@ -134,7 +136,7 @@ class SearchRequest(BaseModel):
     top_k: int = Field(default=24, ge=1, le=100)
     source_url: Optional[str] = None
     allowed_sources: Optional[List[str]] = None
-    mode: Literal["fused", "visual", "transcript"] = "fused"
+    mode: Literal["fused", "visual", "transcript", "ocr"] = "fused"
     min_score: float = Field(default=0.18, ge=-1.0, le=1.0)
 
 
@@ -142,6 +144,7 @@ SEARCH_VECTOR_PATHS = {
     "fused": "embedding",
     "visual": "visual_embedding",
     "transcript": "transcript_embedding",
+    "ocr": "ocr_embedding",
 }
 
 # --- Stats Tracking ---
@@ -641,7 +644,9 @@ def search_frames(req: SearchRequest):
             "timestamp_seconds": int(ts),
             "score": doc.get("score", 0),
             "source_url": link,
-            "title": doc.get("title", "Unknown")
+            "title": doc.get("title", "Unknown"),
+            "transcript": doc.get("text_context", ""),
+            "ocr_text": doc.get("ocr_text", ""),
         })
 
     return {"ok": True, "mode": req.mode, "results": formatted}

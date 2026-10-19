@@ -23,7 +23,7 @@ from evals.metrics import (
     score_case,
 )
 
-VALID_MODES = ("fused", "visual", "transcript")
+VALID_MODES = ("fused", "visual", "transcript", "ocr")
 
 
 def load_dataset(path: Path) -> list[BenchmarkCase]:
@@ -165,7 +165,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate ShotSpot timestamp retrieval")
     parser.add_argument("--dataset", type=Path, required=True)
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
-    parser.add_argument("--modes", default="fused", help="Comma-separated: fused,visual,transcript")
+    parser.add_argument(
+        "--modes",
+        default="fused",
+        help="Comma-separated: fused,visual,transcript,ocr",
+    )
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--restrict-to-dataset", action="store_true")

@@ -87,3 +87,34 @@ def test_search_mode_selects_corresponding_vector_field(monkeypatch):
     assert response.status_code == 200
     assert response.json()["mode"] == "transcript"
     assert captured["vector_path"] == "transcript_embedding"
+
+
+def test_ocr_search_uses_ocr_vector_and_returns_detected_text(monkeypatch):
+    captured = {}
+    monkeypatch.setattr(api, "embed_text", lambda _query: [1.0, 0.0])
+
+    def fake_search(*_args, **kwargs):
+        captured.update(kwargs)
+        return [
+            {
+                "_id": "frame-ocr",
+                "score": 0.88,
+                "time": 30,
+                "source": "https://www.youtube.com/watch?v=abc123",
+                "title": "Demo",
+                "ocr_text": "67% of buyers",
+                "text_context": "Most buyers prefer self service",
+            }
+        ]
+
+    monkeypatch.setattr(api, "search", fake_search)
+    response = client.post(
+        "/search",
+        json={"query": "67 percent", "mode": "ocr", "min_score": -1},
+    )
+
+    assert response.status_code == 200
+    result = response.json()["results"][0]
+    assert captured["vector_path"] == "ocr_embedding"
+    assert result["ocr_text"] == "67% of buyers"
+    assert result["transcript"] == "Most buyers prefer self service"

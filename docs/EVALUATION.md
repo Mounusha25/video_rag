@@ -4,7 +4,7 @@ ShotSpot's evaluation suite measures whether a text query retrieves the correct
 video moment. It reports Recall@1, Recall@5, Recall@K, mean reciprocal rank
 (MRR), errors, and p50/p95 end-to-end request latency. Results can be sliced by
 `visual`, `transcript`, and `mixed` query types and compared across the fused,
-visual-only, and transcript-only indexes.
+visual-only, transcript-only, and OCR-only indexes.
 
 ## 1. Create a labeled dataset
 
@@ -23,17 +23,18 @@ Each JSONL row contains one query and one or more correct time ranges:
 
 Label moments by watching the source video, not by inspecting search results.
 That separation prevents the benchmark from being tuned to the current system.
-Use at least 30 cases for a portfolio result: 10 visual, 10 transcript, and 10
-mixed queries across multiple videos. Keep the JSONL file versioned once its
-labels are stable.
+Use at least 40 cases for a four-modality portfolio result: 10 visual, 10
+transcript, 10 OCR, and 10 mixed queries across multiple videos. Keep the JSONL
+file versioned once its labels are stable.
 
 ## 2. Prepare modality vectors
 
-New ingestion writes three 512-dimensional vectors per sampled frame:
+New ingestion writes four 512-dimensional vectors per sampled frame:
 
 - `visual_embedding`: CLIP image vector;
 - `transcript_embedding`: CLIP vector of the segment transcript;
-- `embedding`: normalized sum of the available image and transcript vectors.
+- `ocr_embedding`: CLIP vector of text detected in the source-resolution frame;
+- `embedding`: normalized sum of the available visual, transcript, and OCR vectors.
 
 Update the Atlas `frame_vectors` index using
 [`ATLAS_VECTOR_INDEX.md`](ATLAS_VECTOR_INDEX.md), deploy the Modal ingestor, and
@@ -59,7 +60,7 @@ Start the API, then run:
 ```bash
 python -m evals.run \
   --dataset evals/data/benchmark.jsonl \
-  --modes fused,visual,transcript \
+  --modes fused,visual,transcript,ocr \
   --top-k 10 \
   --restrict-to-dataset \
   --timeout 120 \

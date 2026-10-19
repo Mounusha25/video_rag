@@ -4,8 +4,9 @@
 
 ShotSpot indexes moments from YouTube and Twitch videos and retrieves relevant
 timestamps from a natural-language query. The current ingestion path combines
-CLIP frame embeddings with Whisper transcript context, stores normalized vectors
-in MongoDB Atlas, and returns timestamped results through FastAPI and Next.js.
+CLIP frame embeddings, Whisper transcript context, and EasyOCR visible-text
+embeddings, stores normalized vectors in MongoDB Atlas, and returns timestamped
+results through FastAPI and Next.js.
 
 ## Current status
 
@@ -19,12 +20,12 @@ verified boundaries are explicit:
   with the frame vector through normalized vector addition.
 - YouTube and Twitch video URLs are accepted by the ingestion API.
 - MongoDB Atlas `$vectorSearch` performs approximate nearest-neighbor retrieval.
-- OCR exists as an experimental standalone Modal service; it is **not yet part
-  of the production ingestion fusion path**.
+- EasyOCR runs on source-resolution frames in both the local and Modal ingestion
+  paths; CLIP receives the same frames through its own image preprocessing.
 - A versioned evaluation harness measures Recall@K, MRR, query-type slices,
   error counts, and p50/p95 latency against a labeled JSONL dataset.
-- The first source-grounded benchmark contains 30 labeled cases across three
-  real videos. Fused retrieval achieved 0.717 Recall@5 and 0.632 MRR with zero
+- The source-grounded benchmark contains 40 labeled cases across three real
+  videos. Fused retrieval achieved 0.788 Recall@5 and 0.647 MRR with zero
   request errors; see [the benchmark report](docs/BENCHMARK_RESULTS.md) for the
   exact scope, ablations, and limitations.
 
@@ -36,10 +37,11 @@ YouTube/Twitch URL
         ▼
 Modal ingestion orchestrator
         │ split into overlapping 15-second segments
-        ├── Whisper-tiny transcript
-        └── frames sampled every 5 seconds ──► CLIP image encoder
-                                                │
-                         CLIP transcript vector ─┤ normalized late fusion
+        ├── Whisper-tiny transcript ───────► CLIP text encoder
+        └── source-resolution frames every 5 seconds
+                 ├── CLIP image encoder
+                 └── EasyOCR visible text ─► CLIP text encoder
+                                                │ normalized available-modality fusion
                                                 ▼
                                   MongoDB Atlas Vector Search
                                                 │
@@ -63,7 +65,7 @@ app/backend/api.py       FastAPI search, ingestion, export, and status API
 app/frontend/            Next.js dataset explorer
 modal_infra/ingestor.py  GPU frame + transcript ingestion pipeline
 modal_infra/embedder.py  GPU text-query embedding endpoint
-modal_infra/ocr.py       Experimental OCR service (not fused yet)
+modal_infra/ocr.py       Standalone OCR inspection utility
 db.py                    MongoDB inserts and Atlas vector search
 evals/                   Labeled retrieval benchmark and metric runner
 tests/                   deterministic API and timestamp unit tests
@@ -80,7 +82,7 @@ docs/                    deployment and Atlas setup guides
 | `POST` | `/dataset/create` | Discover or submit sources and start ingestion |
 | `POST` | `/ingest/start` | Start one Modal ingestion job |
 | `GET` | `/ingestion/status` | Read in-memory progress for a source URL |
-| `POST` | `/search` | Retrieve fused, visual-only, or transcript-only moments |
+| `POST` | `/search` | Retrieve fused, visual-only, transcript-only, or OCR-only moments |
 | `POST` | `/frames/bulk` | Modal callback for storing frame vectors |
 | `POST` | `/ingestion/init` | Modal callback for initializing progress |
 | `GET` | `/dataset/export` | Export result metadata as a ZIP archive |
@@ -146,8 +148,9 @@ build on pushes and pull requests. Fly deployment runs for code changes when
 `FLY_API_TOKEN` is configured and skips cleanly otherwise; it can also be
 started manually.
 
-For retrieval evaluation, label real video moments and run the fused/visual/
-transcript comparison documented in [docs/EVALUATION.md](docs/EVALUATION.md).
+For retrieval evaluation, label real video moments and run the fused, visual,
+transcript, and OCR comparison documented in
+[docs/EVALUATION.md](docs/EVALUATION.md).
 The committed [benchmark dataset](evals/data/benchmark.jsonl) and
 [baseline report](docs/BENCHMARK_RESULTS.md) make the current result
 reproducible without presenting it as universal model accuracy.
@@ -168,9 +171,9 @@ workflow or `fly deploy`. See [docs/DEPLOY.md](docs/DEPLOY.md).
 ## Roadmap
 
 1. Expand the benchmark beyond three videos and add a held-out source split.
-2. Integrate OCR into the primary ingestion path and measure its incremental gain.
-3. Persist ingestion jobs instead of tracking them in process memory.
-4. Tune modality weights against development cases, then evaluate once on held-out cases.
+2. Persist ingestion jobs instead of tracking them in process memory.
+3. Tune modality weights against development cases, then evaluate once on held-out cases.
+4. Batch or parallelize source-resolution OCR to reduce ingestion latency.
 
 ## Security note
 

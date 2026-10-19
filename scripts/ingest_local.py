@@ -20,6 +20,20 @@ from db import get_collection
 
 MODEL_ID = "laion/CLIP-ViT-B-32-laion2B-s34B-b79K"
 WHISPER_ID = "openai/whisper-tiny"
+OCR_LANGUAGES = ["en"]
+
+
+def extract_ocr_text(reader, image, min_confidence: float = 0.35) -> str:
+    """Return confidence-filtered OCR text in reading order for one frame."""
+    if reader is None:
+        return ""
+    results = reader.readtext(np.asarray(image), detail=1, paragraph=False)
+    parts = [
+        str(text).strip()
+        for _box, text, confidence in results
+        if str(text).strip() and float(confidence) >= min_confidence
+    ]
+    return " ".join(parts)
 
 
 def download_video(url: str, directory: Path) -> tuple[Path, str, float]:
@@ -45,38 +59,33 @@ def download_video(url: str, directory: Path) -> tuple[Path, str, float]:
 def extract_frames(media_path: Path, interval: int, duration: float):
     from PIL import Image
 
-    command = [
-        "ffmpeg",
-        "-i",
-        str(media_path),
-        "-vf",
-        f"fps=1/{interval},scale=224:224",
-        "-f",
-        "image2pipe",
-        "-pix_fmt",
-        "rgb24",
-        "-vcodec",
-        "rawvideo",
-        "-loglevel",
-        "error",
-        "-",
-    ]
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    assert process.stdout is not None
-    frame_size = 224 * 224 * 3
-    frames = []
-    index = 0
-    while True:
-        raw = process.stdout.read(frame_size)
-        if len(raw) != frame_size:
-            break
-        timestamp = min(index * interval, max(duration - 0.001, 0))
-        frames.append((timestamp, Image.frombytes("RGB", (224, 224), raw)))
-        index += 1
-    _, stderr = process.communicate()
-    if process.returncode:
-        raise RuntimeError(f"ffmpeg frame extraction failed: {stderr.decode()[-500:]}")
-    return frames
+    # Preserve source resolution for OCR. CLIPProcessor performs its own resize
+    # later; resizing here would make small interface text unreadable.
+    with tempfile.TemporaryDirectory(prefix="shotspot-frames-") as frame_dir:
+        output_pattern = str(Path(frame_dir) / "frame-%06d.jpg")
+        command = [
+            "ffmpeg",
+            "-i",
+            str(media_path),
+            "-vf",
+            f"fps=1/{interval}",
+            "-q:v",
+            "2",
+            "-loglevel",
+            "error",
+            output_pattern,
+        ]
+        result = subprocess.run(command, capture_output=True, check=False)
+        if result.returncode:
+            raise RuntimeError(
+                f"ffmpeg frame extraction failed: {result.stderr.decode()[-500:]}"
+            )
+        frames = []
+        for index, frame_path in enumerate(sorted(Path(frame_dir).glob("frame-*.jpg"))):
+            timestamp = min(index * interval, max(duration - 0.001, 0))
+            with Image.open(frame_path) as image:
+                frames.append((timestamp, image.convert("RGB").copy()))
+        return frames
 
 
 def extract_audio(media_path: Path, start: float, length: float) -> np.ndarray:
@@ -103,7 +112,15 @@ def extract_audio(media_path: Path, start: float, length: float) -> np.ndarray:
     return np.frombuffer(result.stdout, dtype=np.int16).astype(np.float32) / 32768.0
 
 
-def ingest(url: str, interval: int, segment_duration: int, max_duration: int, keep_existing: bool) -> int:
+def ingest(
+    url: str,
+    interval: int,
+    segment_duration: int,
+    max_duration: int,
+    keep_existing: bool,
+    enable_ocr: bool = True,
+    ocr_min_confidence: float = 0.35,
+) -> int:
     import torch
     from transformers import CLIPModel, CLIPProcessor, pipeline
 
@@ -112,6 +129,20 @@ def ingest(url: str, interval: int, segment_duration: int, max_duration: int, ke
     clip_model = CLIPModel.from_pretrained(MODEL_ID).to(device).eval()
     clip_processor = CLIPProcessor.from_pretrained(MODEL_ID)
     transcriber = pipeline("automatic-speech-recognition", model=WHISPER_ID, device=-1)
+    ocr_reader = None
+    if enable_ocr:
+        try:
+            import certifi
+            import easyocr
+        except ImportError as exc:
+            raise RuntimeError(
+                "OCR ingestion requires easyocr; install requirements-local.txt"
+            ) from exc
+        print("Loading EasyOCR on CPU...")
+        # Python framework installs on macOS may not inherit the system keychain.
+        # Point urllib (used by EasyOCR's first-run model download) at certifi.
+        os.environ.setdefault("SSL_CERT_FILE", certifi.where())
+        ocr_reader = easyocr.Reader(OCR_LANGUAGES, gpu=False, verbose=False)
 
     with tempfile.TemporaryDirectory(prefix="shotspot-") as temporary:
         media_path, title, duration = download_video(url, Path(temporary))
@@ -151,6 +182,25 @@ def ingest(url: str, interval: int, segment_duration: int, max_duration: int, ke
                 visual = clip_model.get_image_features(**image_inputs)
                 visual = visual / visual.norm(p=2, dim=-1, keepdim=True)
 
+            ocr_texts = [
+                extract_ocr_text(ocr_reader, image, ocr_min_confidence)
+                for _, image in segment_frames
+            ]
+            ocr_vectors: list[object | None] = [None] * len(ocr_texts)
+            nonempty_ocr = [(index, text) for index, text in enumerate(ocr_texts) if text]
+            if nonempty_ocr:
+                ocr_inputs = clip_processor(
+                    text=[text for _, text in nonempty_ocr],
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                ).to(device)
+                with torch.no_grad():
+                    encoded_ocr = clip_model.get_text_features(**ocr_inputs)
+                    encoded_ocr = encoded_ocr / encoded_ocr.norm(p=2, dim=-1, keepdim=True)
+                for (index, _), vector in zip(nonempty_ocr, encoded_ocr):
+                    ocr_vectors[index] = vector
+
             transcript_vector = None
             if transcript:
                 text_inputs = clip_processor(
@@ -160,11 +210,17 @@ def ingest(url: str, interval: int, segment_duration: int, max_duration: int, ke
                     transcript_vector = clip_model.get_text_features(**text_inputs)[0]
                     transcript_vector = transcript_vector / transcript_vector.norm(p=2)
 
-            for (timestamp, _), visual_vector in zip(segment_frames, visual):
-                fused = visual_vector
+            for frame_index, ((timestamp, _), visual_vector) in enumerate(
+                zip(segment_frames, visual)
+            ):
+                available_vectors = [visual_vector]
                 if transcript_vector is not None:
-                    fused = visual_vector + transcript_vector
-                    fused = fused / fused.norm(p=2)
+                    available_vectors.append(transcript_vector)
+                ocr_vector = ocr_vectors[frame_index]
+                if ocr_vector is not None:
+                    available_vectors.append(ocr_vector)
+                fused = torch.stack(available_vectors).sum(dim=0)
+                fused = fused / fused.norm(p=2)
                 documents.append(
                     {
                         "source": url,
@@ -178,15 +234,23 @@ def ingest(url: str, interval: int, segment_duration: int, max_duration: int, ke
                             if transcript_vector is not None
                             else None
                         ),
+                        "ocr_text": ocr_texts[frame_index],
+                        "ocr_embedding": (
+                            ocr_vector.detach().cpu().tolist()
+                            if ocr_vector is not None
+                            else None
+                        ),
                         "embedding_model": MODEL_ID,
                         "transcription_model": WHISPER_ID,
-                        "fusion_strategy": "normalized_sum",
+                        "ocr_model": "easyocr-en" if enable_ocr else None,
+                        "fusion_strategy": "normalized_sum_available_modalities",
                         "ingestion_backend": "local",
                     }
                 )
             print(
                 f"Processed {segment_start:.0f}-{segment_end:.0f}s: "
-                f"{len(segment_frames)} frames, {len(transcript)} transcript characters"
+                f"{len(segment_frames)} frames, {len(transcript)} transcript characters, "
+                f"{sum(bool(text) for text in ocr_texts)} OCR-positive frames"
             )
 
     collection = get_collection()
@@ -204,14 +268,31 @@ def main() -> int:
     parser.add_argument("--segment-duration", type=int, default=15)
     parser.add_argument("--max-duration", type=int, default=600)
     parser.add_argument("--keep-existing", action="store_true")
+    parser.add_argument(
+        "--ocr",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Extract and embed visible frame text (default: enabled)",
+    )
+    parser.add_argument("--ocr-min-confidence", type=float, default=0.35)
     args = parser.parse_args()
     if args.interval < 1 or args.segment_duration < 1 or args.max_duration < 1:
         parser.error("duration values must be positive")
+    if not 0 <= args.ocr_min_confidence <= 1:
+        parser.error("--ocr-min-confidence must be between 0 and 1")
 
     load_dotenv(PROJECT_ROOT / ".env")
     if not os.environ.get("MONGODB_URI"):
         parser.error("MONGODB_URI is not configured in .env")
-    ingest(args.url, args.interval, args.segment_duration, args.max_duration, args.keep_existing)
+    ingest(
+        args.url,
+        args.interval,
+        args.segment_duration,
+        args.max_duration,
+        args.keep_existing,
+        enable_ocr=args.ocr,
+        ocr_min_confidence=args.ocr_min_confidence,
+    )
     return 0
 
 

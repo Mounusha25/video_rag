@@ -40,6 +40,7 @@ image = (
         "requests",
         "numpy",
         "openai-whisper",
+        "easyocr==1.7.2",
         "accelerate",
         "pymongo[srv]",
         "certifi",
@@ -84,6 +85,7 @@ class VideoWorker:
     def setup(self):
         import torch
         from transformers import CLIPProcessor, CLIPModel, pipeline, AutoModelForSpeechSeq2Seq, AutoProcessor, logging as hf_logging
+        import easyocr
         import warnings
         
         # Suppress noise
@@ -97,6 +99,7 @@ class VideoWorker:
         self.processor = CLIPProcessor.from_pretrained(MODEL_REPO, local_files_only=True)
         self.model = CLIPModel.from_pretrained(MODEL_REPO, local_files_only=True).to(self.device)
         self.model.eval()
+        self.ocr_reader = easyocr.Reader(["en"], gpu=self.device == "cuda", verbose=False)
         
         # Load Whisper
         model_id = "openai/whisper-tiny"
@@ -214,34 +217,25 @@ class VideoWorker:
                 except Exception as e:
                     print(f"⚠️ Transcription warning: {e}")
 
-                # 3. Frame Extraction (Reduced FPS for speed: 0.2 FPS = 1 frame every 5s)
-                # This reduces CLIP load by 5-25x compared to 1fps or 5fps
+                # 3. Frame Extraction (0.2 FPS = 1 frame every 5s).
+                # Keep source resolution for OCR; CLIPProcessor resizes separately.
                 INTERVAL = 5
-                
+                frame_pattern = os.path.join(temp_dir, "frame-%06d.jpg")
                 cmd_ffmpeg = [
-                    "ffmpeg", 
-                    "-i", media_path,
-                    "-vf", f"fps=1/{INTERVAL},scale=224:224", 
-                    "-f", "image2pipe",
-                    "-pix_fmt", "rgb24",
-                    "-vcodec", "rawvideo", 
-                    "-loglevel", "error",
-                    "-"
+                    "ffmpeg", "-i", media_path,
+                    "-vf", f"fps=1/{INTERVAL}",
+                    "-q:v", "2", "-loglevel", "error", frame_pattern,
                 ]
-                
-                process = subprocess.Popen(cmd_ffmpeg, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-                frame_bytes = 224 * 224 * 3
-                
-                frame_idx = 0
-                while True:
-                    raw = process.stdout.read(frame_bytes)
-                    if len(raw) != frame_bytes: break
-                    frames.append(Image.frombytes("RGB", (224, 224), raw))
-                    # Calculate timestamp properly based on interval
-                    timestamps.append(start + (frame_idx * INTERVAL)) 
-                    frame_idx += 1
-                
-                process.terminate()
+                subprocess.run(cmd_ffmpeg, capture_output=True, check=True)
+                frame_paths = sorted(
+                    os.path.join(temp_dir, name)
+                    for name in os.listdir(temp_dir)
+                    if name.startswith("frame-") and name.endswith(".jpg")
+                )
+                for frame_idx, frame_path in enumerate(frame_paths):
+                    with Image.open(frame_path) as image:
+                        frames.append(image.convert("RGB").copy())
+                    timestamps.append(start + (frame_idx * INTERVAL))
 
         except Exception as e:
             print(f"❌ processing_pipeline critical error: {e}")
@@ -258,6 +252,35 @@ class VideoWorker:
             img_emb = img_emb / img_emb.norm(p=2, dim=-1, keepdim=True)
         img_emb = img_emb.cpu().numpy()
 
+        # Detect visible text per frame, then embed only OCR-positive frames.
+        ocr_texts = []
+        for frame in frames:
+            detections = self.ocr_reader.readtext(
+                np.asarray(frame), detail=1, paragraph=False
+            )
+            ocr_texts.append(
+                " ".join(
+                    str(text).strip()
+                    for _box, text, confidence in detections
+                    if str(text).strip() and float(confidence) >= 0.35
+                )
+            )
+
+        ocr_embeddings = [None] * len(ocr_texts)
+        nonempty_ocr = [(index, text) for index, text in enumerate(ocr_texts) if text]
+        if nonempty_ocr:
+            inputs = self.processor(
+                text=[text for _, text in nonempty_ocr],
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+            ).to(self.device)
+            with torch.no_grad():
+                encoded_ocr = self.model.get_text_features(**inputs)
+                encoded_ocr = encoded_ocr / encoded_ocr.norm(p=2, dim=-1, keepdim=True)
+            for (index, _), embedding in zip(nonempty_ocr, encoded_ocr.cpu().numpy()):
+                ocr_embeddings[index] = embedding
+
         # Embed Text Context (Once)
         text_embedding = None
         if transcription_text:
@@ -270,11 +293,13 @@ class VideoWorker:
         # Combine Image + Text (Late Fusion)
         results = []
         for i, t in enumerate(timestamps):
-            vec = img_emb[i]
-            # Add text context to every frame in segment
+            available_vectors = [img_emb[i]]
             if text_embedding is not None:
-                vec = vec + text_embedding
-                vec = vec / (np.linalg.norm(vec) + 1e-9) 
+                available_vectors.append(text_embedding)
+            if ocr_embeddings[i] is not None:
+                available_vectors.append(ocr_embeddings[i])
+            vec = np.sum(available_vectors, axis=0)
+            vec = vec / (np.linalg.norm(vec) + 1e-9)
             
             results.append({
                 "time": t, 
@@ -283,12 +308,17 @@ class VideoWorker:
                 "transcript_embedding": (
                     text_embedding.tolist() if text_embedding is not None else None
                 ),
+                "ocr_text": ocr_texts[i],
+                "ocr_embedding": (
+                    ocr_embeddings[i].tolist() if ocr_embeddings[i] is not None else None
+                ),
                 "title": title, 
                 "source": video_url,
                 "text_context": transcription_text,
                 "embedding_model": MODEL_REPO,
                 "transcription_model": "openai/whisper-tiny",
-                "fusion_strategy": "normalized_sum",
+                "ocr_model": "easyocr-en",
+                "fusion_strategy": "normalized_sum_available_modalities",
             })
 
         # Upload

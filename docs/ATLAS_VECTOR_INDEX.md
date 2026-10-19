@@ -36,6 +36,12 @@ This project is **vector-based**: search uses only Atlas Vector Search. Create t
       "similarity": "cosine"
     },
     {
+      "type": "vector",
+      "path": "ocr_embedding",
+      "numDimensions": 512,
+      "similarity": "cosine"
+    },
+    {
       "type": "filter",
       "path": "source"
     }
@@ -48,12 +54,27 @@ This project is **vector-based**: search uses only Atlas Vector Search. Create t
 2. The `source` filter field is required for dataset-scoped evaluation.
 3. Existing documents created before multimodal evaluation contain only
    `embedding`. Re-ingest benchmark videos to populate `visual_embedding` and
-   `transcript_embedding` before comparing modes.
+   `transcript_embedding` and `ocr_embedding` before comparing modes.
 
 # Troubleshooting
 - **Seeing old video clips?** You likely forgot to add the `source` filter block to your Atlas Search Index definition. Without it, the `filter` in the query is silently ignored.
 
 8. Create the index. It may take a few minutes to build.
+
+If `frame_vectors` already exists, update it from the project root instead of
+creating a duplicate:
+
+```bash
+python - <<'PY'
+from dotenv import load_dotenv
+load_dotenv('.env')
+from db import update_vector_index
+print(update_vector_index())
+PY
+```
+
+Atlas keeps the old index queryable while the new definition builds. Confirm
+that its status returns to `READY` before running OCR-mode evaluation.
 
 ---
 
